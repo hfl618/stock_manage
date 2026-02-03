@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# -------------------------- 导入依赖（仅保留必要包，无冗余） --------------------------
+# -------------------------- 导入依赖（新增二维码和图片处理包） --------------------------
 import os
 import sys
 import logging
@@ -13,6 +13,12 @@ from flask import Flask, render_template_string, request, redirect, url_for, fla
 from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
 import uuid
+import json
+import qrcode
+import base64
+from PIL import Image
+import io
+import time
 
 # -------------------------- 基础配置（稳定版，修复数据库路径核心问题） --------------------------
 # 系统判断
@@ -38,12 +44,13 @@ app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10M文件上传限制
 app.config['JSON_AS_ASCII'] = False
 db = SQLAlchemy(app)
 
-# 目录定义（自动创建，无多余目录）
+# 目录定义（自动创建，新增二维码目录）
 STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
 IMG_FOLDER = os.path.join(STATIC_FOLDER, 'img')  # 图片目录
 ATTACH_FOLDER = os.path.join(STATIC_FOLDER, 'attach')  # 附件目录
+QRCODE_FOLDER = os.path.join(STATIC_FOLDER, 'qrcode')  # 二维码目录
+BACKUP_FOLDER = os.path.join(BASE_DIR, 'backup')  # 备份目录
 
-BACKUP_FOLDER = os.path.join(BASE_DIR, 'backup') # 备份目录
 # 核心修改：数据库文件固定在Flask instance目录
 DB_FILE = os.path.join(app.instance_path, 'component.db')
 
@@ -51,8 +58,8 @@ DB_FILE = os.path.join(app.instance_path, 'component.db')
 ALLOWED_IMG_EXT = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
 ALLOWED_ATTACH_EXT = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'rar', 'txt', 'csv'}
 
-# 自动创建必要目录（无冗余）
-for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, BACKUP_FOLDER]:
+# 自动创建必要目录（新增二维码目录）
+for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, QRCODE_FOLDER, BACKUP_FOLDER]:
     if not os.path.exists(folder):
         os.makedirs(folder)
         logger.info(f"自动创建文件夹：{folder}")
@@ -61,7 +68,7 @@ for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, BACKUP_FOLDER]:
 HELP_FILE = os.path.join(BASE_DIR, 'help.txt')
 
 
-# -------------------------- 数据库模型（稳定版，无多余字段，保留数量/单位独立字段） --------------------------
+# -------------------------- 数据库模型（新增二维码路径字段） --------------------------
 class Component(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     category = db.Column(db.String(50), nullable=False, default='未知')  # 品类
@@ -77,6 +84,7 @@ class Component(db.Model):
     remark = db.Column(db.String(200), default='无')  # 备注
     img_path = db.Column(db.String(255), default='')  # 图片路径
     attach_path = db.Column(db.String(255), default='')  # 附件路径
+    qrcode_path = db.Column(db.String(255), default='')  # 二维码路径（新增）
 
     def __repr__(self):
         return f'<Component {self.id} - {self.category} {self.model}>'
@@ -89,8 +97,26 @@ class Component(db.Model):
             pre = pre.replace(c, '_')
         return pre[:80]  # 限制长度，避免文件名过长
 
+    def get_qr_data(self):
+        """生成二维码数据字符串"""
+        qr_data = {
+            'id': self.id,
+            'category': self.category,
+            'model': self.model,
+            'package': self.package,
+            'supplier': self.supplier,
+            'quantity': self.quantity,
+            'unit': self.unit,
+            'location': self.location,
+            'price': self.price,
+            'buy_time': self.buy_time,
+            'channel': self.channel,
+            'remark': self.remark
+        }
+        return json.dumps(qr_data, ensure_ascii=False)
 
-# -------------------------- 核心工具函数（稳定版+新增残留清理，修复备份逻辑） --------------------------
+
+# -------------------------- 核心工具函数（新增二维码功能） --------------------------
 # 数量预警样式
 def get_quantity_css(quantity):
     if quantity <= QUANTITY_WARN_LOW:
@@ -101,24 +127,57 @@ def get_quantity_css(quantity):
         return "text-success"
 
 
-# 检测重复元器件（品类+封装为唯一键）
-def is_duplicate(data):
-    """确保入参是字典，避免列表调用get报错，增加类型校验"""
-    if not isinstance(data, dict):
-        logger.error(f"is_duplicate入参不是字典：{type(data)}")
-        return None
-    category = data.get('category', '').strip()
-    package = data.get('package', '').strip()
-    return Component.query.filter(Component.category == category, Component.package == package).first()
+# 检测重复元器件（料号/型号唯一匹配）- 修复：增强兼容性
+def is_duplicate(item):
+    """
+    核心：判断单条BOM数据是否重复，基于【料号/型号】唯一匹配
+    入参：字典格式
+    出参：存在重复返回Component对象，不存在返回None
+    """
+    try:
+        # 关键配置：基于料号/型号匹配
+        unique_field = 'model'  # 改为你的实际字段：part_no/料号/code/sku等
+
+        # 强校验：入参不是字典 → 直接返回None
+        if not isinstance(item, dict):
+            logger.debug(f"is_duplicate入参不是字典：{type(item)}")
+            return None
+
+        # 校验是否包含唯一关键字段，无值/无字段 → 视为新数据
+        if unique_field not in item or not str(item[unique_field]).strip():
+            return None
+
+        # 数据库精准匹配：转字符串+去空格
+        match_value = str(item[unique_field]).strip()
+        duplicate_item = db.session.query(Component).filter(
+            getattr(Component, unique_field) == match_value
+        ).first()
+
+        return duplicate_item
+    except Exception as e:
+        logger.error(f"单条BOM数据重复检测异常：{str(e)}", exc_info=True)
+        return None  # 异常时视为新数据
 
 
-# 表格内去重（BOM导入用）
+# 表格内去重（BOM导入用）- 修复：适配字典格式入参
 def remove_table_dup(data_list):
+    """
+    修复：入参为映射后的字典列表
+    根据品类+型号+封装去重，保留第一条数据
+    """
+    if not isinstance(data_list, list) or not all(isinstance(d, dict) for d in data_list):
+        logger.error("remove_table_dup入参不是「字典列表」")
+        return data_list
     seen = set()
     unique = []
     for d in data_list:
-        key = (d.get('category', '').strip(), d.get('package', '').strip())
-        if key not in seen:
+        # 使用品类+型号+封装作为唯一键
+        key = (
+            d.get('category', '').strip(),
+            d.get('model', '').strip(),
+            d.get('package', '').strip()
+        )
+        if key not in seen and key[0] and key[1] and key[2]:  # 非空才去重
             seen.add(key)
             unique.append(d)
     return unique
@@ -161,6 +220,62 @@ def delete_file(file_path):
             pass
 
 
+# 生成二维码
+def generate_qrcode(component):
+    """为元器件生成二维码"""
+    try:
+        # 获取二维码数据
+        qr_data = component.get_qr_data()
+
+        # 创建二维码对象
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(qr_data)
+        qr.make(fit=True)
+
+        # 生成二维码图片
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        # 生成文件名
+        filename = f"QR_{component.id}_{component.model.replace('/', '_')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
+        filepath = os.path.join(QRCODE_FOLDER, filename)
+
+        # 保存图片
+        img.save(filepath)
+
+        # 返回相对路径
+        rel_path = os.path.relpath(filepath, BASE_DIR).replace('\\', '/')
+
+        # 更新组件二维码路径
+        component.qrcode_path = rel_path
+        db.session.commit()
+
+        logger.info(f"二维码生成成功：{rel_path}")
+        return rel_path
+    except Exception as e:
+        logger.error(f"二维码生成失败：{str(e)}")
+        return ""
+
+
+# 获取或生成二维码
+def get_or_generate_qrcode(component_id):
+    """获取二维码，如果没有则生成"""
+    component = Component.query.get(component_id)
+    if not component:
+        return ""
+
+    # 如果已有二维码文件且文件存在
+    if component.qrcode_path and os.path.exists(os.path.join(BASE_DIR, component.qrcode_path)):
+        return component.qrcode_path
+
+    # 生成新二维码
+    return generate_qrcode(component)
+
+
 # 读取帮助文件
 def get_help_content():
     try:
@@ -170,9 +285,9 @@ def get_help_content():
         return "使用说明文件丢失，已自动重新创建！"
 
 
-# 清理残留文件（新增核心函数）
+# 清理残留文件（修改：包含二维码）
 def clean_residual_files():
-    """清理无关联的图片和附件：数据库中不存在的文件直接删除"""
+    """清理无关联的图片、附件和二维码：数据库中不存在的文件直接删除"""
     try:
         # 获取数据库中所有有效文件路径
         valid_files = set()
@@ -180,6 +295,7 @@ def clean_residual_files():
         for c in comps:
             if c.img_path: valid_files.add(c.img_path)
             if c.attach_path: valid_files.add(c.attach_path)
+            if c.qrcode_path: valid_files.add(c.qrcode_path)
         logger.info(f"数据库中有效文件数：{len(valid_files)}")
 
         # 扫描并清理图片目录
@@ -200,9 +316,19 @@ def clean_residual_files():
                     delete_file(file_path)
                     attach_del_count += 1
 
-        total_del = img_del_count + attach_del_count
-        logger.info(f"残留文件清理完成：图片{img_del_count}个，附件{attach_del_count}个，总计{total_del}个")
-        return True, f"清理成功！共删除残留文件{total_del}个（图片{img_del_count}个+附件{attach_del_count}个）"
+        # 扫描并清理二维码目录
+        qrcode_del_count = 0
+        for root, _, files in os.walk(QRCODE_FOLDER):
+            for file in files:
+                file_path = os.path.relpath(os.path.join(root, file), BASE_DIR).replace('\\', '/')
+                if file_path not in valid_files:
+                    delete_file(file_path)
+                    qrcode_del_count += 1
+
+        total_del = img_del_count + attach_del_count + qrcode_del_count
+        logger.info(
+            f"残留文件清理完成：图片{img_del_count}个，附件{attach_del_count}个，二维码{qrcode_del_count}个，总计{total_del}个")
+        return True, f"清理成功！共删除残留文件{total_del}个（图片{img_del_count}个+附件{attach_del_count}个+二维码{qrcode_del_count}个）"
     except Exception as e:
         logger.error(f"残留文件清理失败：{str(e)}")
         return False, f"清理失败：{str(e)}"
@@ -249,9 +375,9 @@ def delete_auto_start():
         return False, "关闭开机自启失败（请以管理员身份运行）"
 
 
-# -------------------------- 备份恢复核心函数（彻底修复路径+无数据判断逻辑） --------------------------
+# -------------------------- 备份恢复核心函数（修改：包含二维码） --------------------------
 def backup_all_data():
-    """修改：无下载弹窗，直接保存到backup默认目录，数据库指向instance"""
+    """修改：无下载弹窗，直接保存到backup默认目录，数据库指向instance，包含二维码"""
     try:
         # 1. 检测数据库文件是否存在（instance目录）
         if not os.path.exists(DB_FILE):
@@ -268,7 +394,7 @@ def backup_all_data():
         backup_name = f"元器件库存备份_{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
         backup_path = os.path.join(BACKUP_FOLDER, backup_name)
 
-        # 4. 打包备份（instance里的数据库+图片+附件）
+        # 4. 打包备份（instance里的数据库+图片+附件+二维码）
         with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             # 核心修改：打包instance目录下的数据库文件
             zf.write(DB_FILE, os.path.basename(DB_FILE))
@@ -282,35 +408,31 @@ def backup_all_data():
                 for file in files:
                     file_path = os.path.join(root, file)
                     zf.write(file_path, os.path.relpath(file_path, BASE_DIR))
+            # 备份二维码（新增）
+            for root, _, files in os.walk(QRCODE_FOLDER):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    zf.write(file_path, os.path.relpath(file_path, BASE_DIR))
 
         logger.info(f"备份成功：{backup_path}，包含{comp_count}条元器件数据")
         flash(f"备份成功！共{comp_count}条数据，备份包已保存至【{BACKUP_FOLDER}】目录", "success")
-        return backup_path  # 仅返回路径，不触发下载
+        return backup_path
     except Exception as e:
         flash(f"备份失败：{str(e)}", "danger")
         logger.error(f"备份失败：{str(e)}")
         return None
+
+
 def validate_backup_zip(zip_path):
-    """简化验证：仅检测数据库文件，去掉附件/图片目录的严格检测，避免空目录验证失败"""
+    """简化验证：仅检测数据库文件"""
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            # 只验证数据库是否存在，图片/附件目录空也正常
             if 'component.db' in zf.namelist():
                 return True, "备份文件验证通过"
             else:
                 return False, "备份文件缺少数据库（component.db）"
     except:
         return False, "备份文件损坏或不是有效ZIP文件"
-
-
-def unzip_backup(zip_path, target_dir):
-    """解压备份，直接覆盖，无冗余逻辑"""
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            zf.extractall(target_dir)
-        return True, "解压成功"
-    except Exception as e:
-        return False, f"解压失败：{str(e)}"
 
 
 # -------------------------- BOM导入常量（稳定版+新增依旧导入选项） --------------------------
@@ -332,54 +454,73 @@ REQUIRED_FIELDS = ['category', 'model', 'package']
 
 
 def parse_table_data(source, source_type):
-    """解析粘贴/Excel数据，稳定版+增加类型校验"""
+    """解析粘贴/Excel数据"""
     columns, preview, raw_data = [], [], []
     try:
         if source_type == 'paste':
             lines = [l.strip() for l in source.split('\n') if l.strip()]
             if not lines:
-                return columns, preview, raw_data, "无有效粘贴数据"
+                return columns, preview, raw_data, "无有效粘贴数据", 0
+            # 按制表符分割
             col_num = len(lines[0].split('\t'))
             columns = [f'列{i + 1}' for i in range(col_num)]
             for line in lines:
                 row = line.split('\t') + [''] * (col_num - len(line.split('\t')))
                 raw_data.append(row[:col_num])
-            preview = raw_data[:3]
+            preview = raw_data[:3]  # 只显示前三行
+            row_count = len(raw_data)  # 计算行数
         elif source_type == 'excel':
+            if not allowed_file(source.filename, {'xlsx'}):
+                return columns, preview, raw_data, "仅支持xlsx格式Excel文件", 0
             df = pd.read_excel(source, engine='openpyxl')
-            df.columns = [f'列{i + 1}' if pd.isna(c) else str(c).strip() for i, c in enumerate(df.columns)]
+            df.columns = [f'列{i + 1}' if pd.isna(c) or not str(c).strip() else str(c).strip() for i, c in
+                          enumerate(df.columns)]
             columns = list(df.columns)
             raw_data = df.fillna('').values.tolist()
-            preview = raw_data[:3]
-        return columns, preview, raw_data, ""
+            preview = raw_data[:3]  # 只显示前三行
+            row_count = len(raw_data)  # 计算行数
+        return columns, preview, raw_data, "", row_count
     except Exception as e:
-        return columns, preview, raw_data, f"解析失败：{str(e)}（Excel仅支持xlsx）"
+        logger.error(f"表格解析失败：{str(e)}")
+        return columns, preview, raw_data, f"解析失败：{str(e)}", 0
 
 
 def map_table_data(raw_data, columns, mapping, batch_vals):
-    """映射表格数据，稳定版+增加参数类型校验"""
+    """映射表格数据为字典列表"""
     data_list, errors = [], []
-    # 增加类型校验，避免非字典入参
-    if not isinstance(mapping, dict) or not isinstance(batch_vals, dict):
-        errors.append("映射数据或批量值格式错误")
+
+    if not isinstance(mapping, dict) or not isinstance(batch_vals, dict) or not isinstance(raw_data, list):
+        errors.append("数据格式错误")
         return data_list, errors
-    mapped = [v for v in mapping.values() if v]
+
+    # 检查必填字段是否映射
+    mapped_fields = [v for v in mapping.values() if v]
     for f in REQUIRED_FIELDS:
-        if f not in mapped:
+        if f not in mapped_fields:
             errors.append(f"缺少必填字段映射：{f}")
     if errors:
         return data_list, errors
+
     # 处理批量值
     batch = {}
     for k, v in batch_vals.items():
         if not v:
             continue
         try:
-            batch[k] = int(v) if k == 'quantity' else float(v) if k == 'price' else v
-        except:
-            errors.append(f"批量{SYSTEM_FIELDS[[i[0] for i in SYSTEM_FIELDS].index(k)][1]}非有效数字")
-    # 映射数据
+            if k == 'quantity':
+                batch[k] = int(v)
+            elif k == 'price':
+                batch[k] = float(v)
+            else:
+                batch[k] = v.strip()
+        except ValueError:
+            errors.append(f"批量{[i[1] for i in SYSTEM_FIELDS if i[0] == k][0]}必须为有效数字")
+    if errors:
+        return data_list, errors
+
+    # 映射原始数据为字典
     for idx, row in enumerate(raw_data, 1):
+        # 初始化默认值
         d = {
             'category': '未知', 'model': '未知型号', 'package': '未知封装',
             'supplier': '未知供应商', 'quantity': 1, 'unit': '个',
@@ -387,23 +528,31 @@ def map_table_data(raw_data, columns, mapping, batch_vals):
             'buy_time': datetime.now().strftime('%Y-%m-%d'),
             'channel': '未知', 'remark': '无'
         }
+        # 按映射关系赋值
         for col, field in mapping.items():
             if not field or col not in columns:
                 continue
+            if columns.index(col) >= len(row):
+                continue
             val = str(row[columns.index(col)]).strip()
+            # 类型转换
             if field == 'quantity':
                 d[field] = int(val) if val.isdigit() else 1
             elif field == 'price':
                 d[field] = float(val) if val.replace('.', '').isdigit() else 0.00
             elif val:
                 d[field] = val
+        # 覆盖批量值
         d.update(batch)
         data_list.append(d)
+
+    # 表格内去重
+    data_list = remove_table_dup(data_list)
     return data_list, errors
 
 
-# -------------------------- 前端模板（已修复Jinja语法错误+合并列显示正常） --------------------------
-# 主页面模板（合并数量+单位列，修复Jinja语法错误，修正colspan）
+# -------------------------- 前端模板（主页面修改：二维码列默认不显示，点击按钮才显示） --------------------------
+# 主页面模板（修改：二维码列默认不显示，点击按钮才显示）
 MAIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -422,22 +571,27 @@ MAIN_TEMPLATE = '''
         .oper-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
         .table-box { background: white; border-radius: 8px; box-shadow: 0 0 5px rgba(0,0,0,0.1); overflow-x: auto; padding: 0.5rem; }
         .img-sm { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; }
-        /* 优化弹窗样式：固定尺寸+避免叠加+降低渲染压力 */
+        .qrcode-sm { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; }
+        .qrcode-column { display: none; }  /* 默认不显示二维码列 */
         .alert { 
             position: fixed; top: 80px; right: 20px; z-index: 9999; 
             min-width: 320px; max-width: 400px; margin: 0; padding: 0.8rem 1.2rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15); /* 轻微阴影，减少重绘 */
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         }
         .file-link { color: #0d6efd; text-decoration: none; }
         .file-link:hover { text-decoration: underline; }
+        .modal-backdrop { z-index: 1040 !important; }
+        .modal { z-index: 1050 !important; }
+        .show-qrcode .qrcode-column { display: table-cell; }  /* 显示二维码列的样式 */
     </style>
 </head>
 <body>
     <div class="top-nav">
-        <h4>元器件库存管理系统 - 稳定版</h4>
+        <h4>元器件库存管理系统 - v1</h4>
         <div>
             <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#settingModal">系统设置</a>
             <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#helpModal">使用说明</a>
+            <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#qrcodeModal">扫码管理</a>
         </div>
     </div>
 
@@ -445,7 +599,7 @@ MAIN_TEMPLATE = '''
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for c, m in messages %}
-                    <div class="alert alert-{{c}} alert-dismissible fade show" role="alert">
+                    <div class="alert alert-{{c}} alert-dismissible fade show auto-close" role="alert" data-delay="3000">
                         {{m}}<button class="btn-close" data-bs-dismiss="alert"></button>
                     </div>
                 {% endfor %}
@@ -462,6 +616,7 @@ MAIN_TEMPLATE = '''
                 <button class="btn btn-success btn-sm me-1" data-bs-toggle="modal" data-bs-target="#addModal">添加元器件</button>
                 <button class="btn btn-info btn-sm me-1" onclick="openBOM()">BOM批量导入</button>
                 <button class="btn btn-warning btn-sm" id="exportBtn" disabled onclick="openExport()">导出选中</button>
+                <button class="btn btn-outline-info btn-sm" onclick="toggleQRColumn()" id="toggleQRBtn">显示二维码列</button>
             </div>
             <form method="GET" class="d-flex gap-1">
                 <input type="hidden" name="selected" id="selectedIds" value="{{selected|join(',')}}">
@@ -474,7 +629,7 @@ MAIN_TEMPLATE = '''
             </form>
         </div>
 
-        <div class="table-box">
+        <div class="table-box" id="componentTable">
             <table class="table table-striped table-hover table-sm">
                 <thead class="table-dark">
                     <tr>
@@ -484,10 +639,11 @@ MAIN_TEMPLATE = '''
                         <th>型号规格</th>
                         <th>封装</th>
                         <th>供应商</th>
-                        <th>数量（含单位）</th>
+                        <th>数量</th>
                         <th>存放位置</th>
                         <th>单价(¥)</th>
                         <th width="10%">附件</th>
+                        <th width="8%" class="qrcode-column">二维码</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -516,14 +672,21 @@ MAIN_TEMPLATE = '''
                             <span class="text-muted">无</span>
                             {% endif %}
                         </td>
+                        <td class="qrcode-column">
+                            {% if comp.qrcode_path %}
+                            <a href="/{{comp.qrcode_path}}" target="_blank"><img src="/{{comp.qrcode_path}}" class="qrcode-sm" title="点击查看大图"></a>
+                            {% else %}
+                            <a href="{{url_for('generate_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-info btn-sm" title="生成二维码">生成</a>
+                            {% endif %}
+                        </td>
                         <td>
                             <a href="{{url_for('edit', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-warning btn-sm">编辑</a>
-                            <a href="{{url_for('delete', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-danger btn-sm" onclick="return confirm('确定删除？将同步删除图片/附件！')">删除</a>
+                            <a href="{{url_for('delete', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-danger btn-sm" onclick="return confirm('确定删除？将同步删除图片/附件/二维码！')">删除</a>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="11" class="text-center text-muted py-3">暂无数据，点击「添加元器件」或「BOM批量导入」录入</td>
+                        <td colspan="12" class="text-center text-muted py-3">暂无数据，点击「添加元器件」或「BOM批量导入」录入</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -531,7 +694,7 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 添加元器件弹窗（保留单位输入框） -->
+    <!-- 添加元器件弹窗 -->
     <div class="modal fade" id="addModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -574,7 +737,7 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 批量编辑弹窗（保留单位输入框） -->
+    <!-- 批量编辑弹窗 -->
     <div class="modal fade" id="batchEditModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -620,7 +783,7 @@ MAIN_TEMPLATE = '''
                         <div class="row g-3">
                             <div class="col-md-3"><label>品类</label><input type="text" name="adv_cate" class="form-control-sm" value="{{adv_params.adv_cate or ''}}"></div>
                             <div class="col-md-3"><label>型号规格</label><input type="text" name="adv_model" class="form-control-sm" value="{{adv_params.adv_model or ''}}"></div>
-                            <div class="col-md-3"><label>封装</label><input type="text" name="adv_pack" class="form-control-sm" value="{{adv_params.adv_pack or ''}}"></div>
+                            <div class="col-md-3"><label>封装</th><label><input type="text" name="adv_pack" class="form-control-sm" value="{{adv_params.adv_pack or ''}}"></div>
                             <div class="col-md-3"><label>供应商</label><input type="text" name="adv_sup" class="form-control-sm" value="{{adv_params.adv_sup or ''}}"></div>
                             <div class="col-md-3"><label>存放位置</label><input type="text" name="adv_loc" class="form-control-sm" value="{{adv_params.adv_loc or ''}}"></div>
                             <div class="col-md-3"><label>采购渠道</label><input type="text" name="adv_chan" class="form-control-sm" value="{{adv_params.adv_chan or ''}}"></div>
@@ -631,14 +794,15 @@ MAIN_TEMPLATE = '''
                     <div class="modal-footer">
                         <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                         <button type="reset" class="btn btn-light border">重置</button>
-                        <button type="submit" class="btn btn-primary">搜索</button>
+                        <button type="submit" class="btn btn-primary">
+                        <img src="/icon/search.png" class="search-icon" alt="搜索">搜索</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- 导出弹窗 -->
+    <!-- 导出弹窗（修改：增加二维码和图片导出选项） -->
     <div class="modal fade" id="exportModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -672,6 +836,21 @@ MAIN_TEMPLATE = '''
                                 <input type="radio" name="format" value="csv" class="form-check-input">
                                 <label class="form-check-label">CSV</label>
                             </div>
+                            <div class="form-check form-check-inline">
+                                <input type="radio" name="format" value="zip" class="form-check-input">
+                                <label class="form-check-label">打包ZIP(包含二维码和图片)</label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label>额外导出内容</label>
+                            <div class="form-check">
+                                <input type="checkbox" name="export_qrcode" value="1" class="form-check-input" checked>
+                                <label class="form-check-label">导出二维码</label>
+                            </div>
+                            <div class="form-check">
+                                <input type="checkbox" name="export_img" value="1" class="form-check-input">
+                                <label class="form-check-label">导出元器件图片</label>
+                            </div>
                         </div>
                         <div>
                             <div class="form-check form-check-inline">
@@ -686,14 +865,14 @@ MAIN_TEMPLATE = '''
                     </div>
                     <div class="modal-footer">
                         <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-warning">确认</button>
+                        <button type="submit" class="btn btn-warning">确认导出</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- 系统设置弹窗【新增清理残留文件按钮】 -->
+    <!-- 系统设置弹窗 -->
     <div class="modal fade" id="settingModal" tabindex="-1">
         <div class="modal-dialog modal-md">
             <div class="modal-content">
@@ -705,7 +884,7 @@ MAIN_TEMPLATE = '''
                     <div class="d-grid gap-2">
                         <a href="{{url_for('backup', selected=selected|join(','), kw=kw)}}" class="btn btn-primary">📥 立即备份数据</a>
                         <a href="{{url_for('restore_page', kw=kw)}}" class="btn btn-warning">🔄 备份恢复（覆盖当前数据）</a>
-                        <a href="{{url_for('clean_residual')}}" class="btn btn-danger">🗑️ 清理残留文件（无关联图片/附件）</a>
+                        <a href="{{url_for('clean_residual')}}" class="btn btn-danger">🗑️ 清理残留文件（无关联图片/附件/二维码）</a>
                         <a href="{{url_for('auto_start', op='open')}}" class="btn btn-info">📌 开启开机自启（Windows）</a>
                         <a href="{{url_for('auto_start', op='close')}}" class="btn btn-dark">❌ 关闭开机自启（Windows）</a>
                     </div>
@@ -735,16 +914,108 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 打印区域（隐藏） -->
+    <!-- 扫码管理弹窗（修改：改进苹果设备兼容性） -->
+    <div class="modal fade" id="qrcodeModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">扫码管理</h5>
+                    <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>📱 扫码读取元器件信息</h6>
+                            <p class="text-muted small">使用手机扫描元器件二维码，快速查看详细信息</p>
+                            <div class="mb-3">
+                                <label>摄像头扫码（仅支持HTTPS或localhost）</label>
+                                <div id="reader" width="300px" style="display: none;"></div>
+                                <div id="cameraNotSupported" class="alert alert-warning">
+                                    <p><strong>⚠️ 摄像头扫码需要HTTPS环境或localhost</strong></p>
+                                    <p>在苹果设备上，请确保：</p>
+                                    <ol class="small">
+                                        <li>通过HTTPS访问本系统</li>
+                                        <li>或在localhost本地环境中使用</li>
+                                        <li>或使用文件上传方式</li>
+                                    </ol>
+                                </div>
+                                <div id="fileUploadArea" class="mt-3">
+                                    <label>上传二维码图片扫描：</label>
+                                    <input type="file" id="qrcodeFile" accept="image/*" class="form-control">
+                                    <button class="btn btn-primary btn-sm mt-2" onclick="scanQRCodeFromFile()">上传并扫描</button>
+                                </div>
+                                <div id="scanResult" class="mt-2 p-2 border rounded" style="min-height: 50px;"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>📄 批量二维码操作</h6>
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-outline-primary" onclick="batchGenerateQRCodes()">批量生成二维码</button>
+                                <button class="btn btn-outline-secondary" onclick="openQRScanner()">打开扫码工具</button>
+                                <a href="{{url_for('batch_generate_qrcodes')}}" class="btn btn-outline-info">为所有元器件生成二维码</a>
+                            </div>
+                            <div class="mt-3">
+                                <h6>扫码使用说明：</h6>
+                                <ol class="small">
+                                    <li><strong>手机扫码：</strong>使用微信/支付宝/手机相机扫描元器件二维码</li>
+                                    <li><strong>电脑扫码：</strong>使用摄像头扫描（需HTTPS或localhost环境）</li>
+                                    <li><strong>文件扫码：</strong>上传二维码图片文件进行识别</li>
+                                    <li>扫描后会显示元器件完整信息</li>
+                                    <li>支持库存盘点时快速查看</li>
+                                </ol>
+                            </div>
+                            <div class="mt-3">
+                                <h6>苹果设备注意事项：</h6>
+                                <ul class="small text-warning">
+                                    <li>iOS Safari对摄像头权限控制严格</li>
+                                    <li>建议通过HTTPS访问本系统</li>
+                                    <li>或使用"上传二维码图片"功能</li>
+                                    <li>iPad支持使用"文件"App选择二维码图片</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 打印区域 -->
     <div id="printArea" class="d-none p-4">
         <h4 class="text-center mb-4">元器件库存数据</h4>
         <table class="table table-striped table-bordered" id="printTable"></table>
     </div>
 
     <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1"></script>
     <script>
-        // 自动关闭提示框
-        setTimeout(() => {document.querySelectorAll('.alert').forEach(a => new bootstrap.Alert(a).close())}, 3000);
+        // 自动关闭提示框（修改：支持自动关闭）
+        function initAutoClose() {
+            document.querySelectorAll('.auto-close').forEach(alertEl => {
+                const delay = alertEl.getAttribute('data-delay') || 3000;
+                setTimeout(() => {
+                    if (alertEl) {
+                        const bsAlert = new bootstrap.Alert(alertEl);
+                        bsAlert.close();
+                    }
+                }, parseInt(delay));
+            });
+        }
+
+        // 页面加载后初始化
+        window.onload = function() {
+            initAutoClose();
+            updateSelect();
+            document.querySelectorAll('.compCheck').forEach(c => {
+                c.addEventListener('change', updateSelect);
+            });
+
+            // 检查是否支持摄像头（iOS需要HTTPS）
+            checkCameraSupport();
+        }
 
         // 获取选中ID
         function getSelected() {
@@ -780,7 +1051,7 @@ MAIN_TEMPLATE = '''
         function batchDel() {
             let ids = getSelected();
             if (ids.length === 0) {alert('请先选择元器件！'); return;}
-            if (confirm(`确定删除选中的${ids.length}条数据？不可恢复！`)) {
+            if (confirm(`确定删除选中的${ids.length}条数据？将同时删除关联的图片、附件和二维码！`)) {
                 window.location.href = "{{url_for('batch_delete', kw=kw)}}&ids=" + ids.join(',');
             }
         }
@@ -795,6 +1066,316 @@ MAIN_TEMPLATE = '''
             let ids = getSelected();
             document.getElementById('exportIds').value = ids.join(',');
             new bootstrap.Modal(document.getElementById('exportModal')).show();
+        }
+
+        // 切换二维码列显示
+        function toggleQRColumn() {
+            const table = document.getElementById('componentTable');
+            const button = document.getElementById('toggleQRBtn');
+
+            if (table.classList.contains('show-qrcode')) {
+                table.classList.remove('show-qrcode');
+                button.innerText = '显示二维码列';
+                button.classList.remove('btn-info');
+                button.classList.add('btn-outline-info');
+            } else {
+                table.classList.add('show-qrcode');
+                button.innerText = '隐藏二维码列';
+                button.classList.remove('btn-outline-info');
+                button.classList.add('btn-info');
+            }
+        }
+
+        // 批量生成二维码
+        function batchGenerateQRCodes() {
+            let ids = getSelected();
+            if (ids.length === 0) {alert('请先选择元器件！'); return;}
+            if (confirm(`确定要为选中的${ids.length}个元器件生成二维码吗？`)) {
+                window.location.href = "{{url_for('batch_generate_qrcodes')}}?ids=" + ids.join(',');
+            }
+        }
+
+        // 打开扫码工具
+        function openQRScanner() {
+            const modal = new bootstrap.Modal(document.getElementById('qrcodeModal'));
+            modal.show();
+        }
+
+        // 检查摄像头支持（解决iOS Safari问题）
+        function checkCameraSupport() {
+            const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            const isHttps = window.location.protocol === 'https:';
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+            // 显示用户友好的提示
+            const cameraNotSupportedDiv = document.getElementById('cameraNotSupported');
+            const readerDiv = document.getElementById('reader');
+
+            // 特别处理iOS Safari的兼容性问题
+            if ((isIOS && isSafari && !isHttps) || (!isLocalhost && !isHttps)) {
+                cameraNotSupportedDiv.innerHTML = `
+                    <div class="alert alert-warning">
+                        <p><strong>⚠️ 摄像头扫码需要HTTPS环境或localhost</strong></p>
+                        <p>苹果设备限制：</p>
+                        <ol class="small">
+                            <li>iOS Safari仅在HTTPS或localhost下允许摄像头访问</li>
+                            <li>请使用「上传二维码图片」功能</li>
+                            <li>或通过HTTPS访问本系统</li>
+                        </ol>
+                        <div class="mt-2">
+                            <button class="btn btn-primary btn-sm" onclick="showFileUpload()">使用文件上传</button>
+                        </div>
+                    </div>
+                `;
+                cameraNotSupportedDiv.style.display = 'block';
+                readerDiv.style.display = 'none';
+                return;
+            }
+
+            // 显示摄像头区域
+            cameraNotSupportedDiv.style.display = 'none';
+            readerDiv.style.display = 'block';
+
+            // 延迟初始化摄像头，避免模态框未打开时初始化
+            if (isHttps || isLocalhost) {
+                setTimeout(() => {
+                    initQRScanner();
+                }, 500); // 增加延迟，确保模态框完全加载
+            }
+        }
+
+        // 新增：显示文件上传区域
+        function showFileUpload() {
+            const fileUploadArea = document.getElementById('fileUploadArea');
+            fileUploadArea.style.display = 'block';
+            fileUploadArea.innerHTML = `
+                <div class="alert alert-info">
+                    <h6>📱 文件扫码使用说明</h6>
+                    <ol class="small">
+                        <li>点击下方按钮选择二维码图片</li>
+                        <li>支持手机截图或保存的二维码图片</li>
+                        <li>点击"上传并扫描"按钮识别</li>
+                        <li>识别成功后会显示元器件信息</li>
+                    </ol>
+                </div>
+                <input type="file" id="qrcodeFile" accept="image/*" class="form-control" onchange="handleFileSelect(event)">
+                <button class="btn btn-primary btn-sm mt-2 w-100" onclick="scanQRCodeFromFile()">📤 上传并扫描</button>
+                <div id="fileScanResult" class="mt-2 p-2 border rounded" style="min-height: 60px;"></div>
+            `;
+        }
+
+        // 新增：处理文件选择
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 显示文件信息
+            const fileInfo = document.createElement('div');
+            fileInfo.className = 'alert alert-light small mt-2';
+            fileInfo.innerHTML = `
+                <strong>已选择文件:</strong> ${file.name}<br>
+                <strong>文件大小:</strong> ${(file.size / 1024).toFixed(1)} KB<br>
+                <strong>文件类型:</strong> ${file.type || '未知'}
+            `;
+
+            const container = document.getElementById('fileUploadArea');
+            const oldInfo = container.querySelector('.file-info');
+            if (oldInfo) oldInfo.remove();
+            fileInfo.className += ' file-info';
+            container.insertBefore(fileInfo, container.querySelector('button'));
+        }
+
+        // 初始化扫码器（改进兼容性）
+        function initQRScanner() {
+            const readerDiv = document.getElementById('reader');
+            const cameraNotSupportedDiv = document.getElementById('cameraNotSupported');
+            const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            const isHttps = window.location.protocol === 'https:';
+
+            // 检查是否支持摄像头API
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                cameraNotSupportedDiv.style.display = 'block';
+                readerDiv.style.display = 'none';
+                return;
+            }
+
+            // iOS Safari需要HTTPS或localhost
+            if (!isHttps && !isLocalhost) {
+                cameraNotSupportedDiv.style.display = 'block';
+                readerDiv.style.display = 'none';
+                return;
+            }
+
+            // 显示摄像头区域
+            readerDiv.style.display = 'block';
+            cameraNotSupportedDiv.style.display = 'none';
+
+            // 使用ZXing库代替html5-qrcode，提高兼容性
+            const codeReader = new ZXing.BrowserMultiFormatReader();
+            const videoElement = document.createElement('video');
+            videoElement.style.width = '100%';
+            videoElement.style.maxWidth = '300px';
+            videoElement.style.border = '1px solid #ddd';
+            videoElement.style.borderRadius = '4px';
+            readerDiv.appendChild(videoElement);
+
+            let isScanning = false;
+
+            function startScanning() {
+                if (isScanning) return;
+
+                codeReader.decodeFromVideoDevice(null, videoElement, (result, err) => {
+                    if (result) {
+                        // 扫描成功
+                        onScanSuccess(result.getText());
+                        stopScanning();
+                    }
+                    if (err && !(err instanceof ZXing.NotFoundException)) {
+                        console.error('扫描错误:', err);
+                    }
+                }).then(() => {
+                    isScanning = true;
+                }).catch(err => {
+                    console.error('无法启动摄像头:', err);
+                    document.getElementById('scanResult').innerHTML = `
+                        <div class="alert alert-warning">
+                            <p>无法启动摄像头：${err.message}</p>
+                            <p>请检查摄像头权限，或使用文件上传功能</p>
+                        </div>
+                    `;
+                });
+            }
+
+            function stopScanning() {
+                if (isScanning) {
+                    codeReader.reset();
+                    isScanning = false;
+                }
+            }
+
+            // 开始扫描
+            startScanning();
+
+            // 模态框关闭时停止扫描
+            document.getElementById('qrcodeModal').addEventListener('hidden.bs.modal', function () {
+                stopScanning();
+            });
+        }
+
+        // 从文件扫描二维码
+        function scanQRCodeFromFile() {
+            const fileInput = document.getElementById('qrcodeFile');
+            const file = fileInput.files[0];
+            const resultDiv = document.getElementById('fileScanResult');
+
+            if (!file) {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p>❌ 请先选择二维码图片文件</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 显示加载状态
+            resultDiv.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                    <span class="ms-2">正在识别二维码...</span>
+                </div>
+            `;
+
+            const codeReader = new ZXing.BrowserMultiFormatReader();
+            const img = new Image();
+
+            img.onload = function() {
+                codeReader.decodeFromImage(img)
+                    .then(result => {
+                        onScanSuccess(result.getText(), 'file');
+                    })
+                    .catch(err => {
+                        console.error('二维码识别失败:', err);
+                        resultDiv.innerHTML = `
+                            <div class="alert alert-danger">
+                                <p>❌ 二维码识别失败</p>
+                                <p class="small">原因: ${err.message || '无法识别二维码内容'}</p>
+                                <p class="small mt-2">请确保:</p>
+                                <ul class="small">
+                                    <li>图片清晰不模糊</li>
+                                    <li>二维码完整无遮挡</li>
+                                    <li>是本系统生成的二维码</li>
+                                </ul>
+                                <button class="btn btn-sm btn-secondary mt-2" onclick="scanQRCodeFromFile()">重新尝试</button>
+                            </div>
+                        `;
+                    });
+            };
+
+            img.onerror = function() {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p>❌ 图片加载失败</p>
+                        <p class="small">请选择有效的图片文件</p>
+                    </div>
+                `;
+            };
+
+            img.src = URL.createObjectURL(file);
+        }
+
+        // 扫描成功处理
+        function onScanSuccess(decodedText, source = 'camera') {
+            const resultContainer = source === 'file' ? 
+                document.getElementById('fileScanResult') : 
+                document.getElementById('scanResult');
+
+            try {
+                const data = JSON.parse(decodedText);
+                resultContainer.innerHTML = `
+                    <div class="alert alert-success">
+                        <h6>✅ 扫码成功！元器件信息：</h6>
+                        <div class="row mt-2">
+                            <div class="col-6">
+                                <p class="mb-1"><strong>ID：</strong>${data.id}</p>
+                                <p class="mb-1"><strong>品类：</strong>${data.category}</p>
+                                <p class="mb-1"><strong>型号：</strong>${data.model}</p>
+                                <p class="mb-1"><strong>封装：</strong>${data.package}</p>
+                            </div>
+                            <div class="col-6">
+                                <p class="mb-1"><strong>数量：</strong>${data.quantity} ${data.unit}</p>
+                                <p class="mb-1"><strong>位置：</strong>${data.location}</p>
+                                <p class="mb-1"><strong>单价：</strong>¥${parseFloat(data.price).toFixed(2)}</p>
+                                <p class="mb-1"><strong>供应商：</strong>${data.supplier}</p>
+                            </div>
+                        </div>
+                        <div class="d-grid gap-2 mt-3">
+                            <a href="/edit/${data.id}" class="btn btn-sm btn-primary" target="_blank">
+                                📝 查看详情
+                            </a>
+                            <button class="btn btn-sm btn-secondary" onclick="${source === 'file' ? 'scanQRCodeFromFile()' : 'startScanning()'}">
+                                🔄 继续扫描
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } catch (e) {
+                resultContainer.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p>❌ 二维码解析失败</p>
+                        <p class="small">原始数据：${decodedText.substring(0, 100)}...</p>
+                        <p class="small">错误：${e.message}</p>
+                        <button class="btn btn-sm btn-secondary mt-2" onclick="${source === 'file' ? 'scanQRCodeFromFile()' : 'startScanning()'}">
+                            重新扫描
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        // 重新开始扫描
+        function startScanning() {
+            document.getElementById('scanResult').innerHTML = '';
+            initQRScanner();
         }
 
         // 打印数据
@@ -842,20 +1423,12 @@ MAIN_TEMPLATE = '''
                 document.getElementById('printArea').classList.add('d-none');
             }
         });
-
-        // 初始化
-        window.onload = function() {
-            updateSelect();
-            document.querySelectorAll('.compCheck').forEach(c => {
-                c.addEventListener('change', updateSelect);
-            });
-        }
     </script>
 </body>
 </html>
 '''
 
-# 编辑页面模板（保留单位输入框，不修改）
+# 编辑页面模板（修改：包含二维码操作）
 EDIT_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -868,6 +1441,7 @@ EDIT_TEMPLATE = '''
         body { background: #f8f9fa; padding: 2rem; }
         .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
         .img-preview { max-width: 200px; max-height: 200px; margin-top: 1rem; border-radius: 4px; }
+        .qrcode-preview { max-width: 150px; max-height: 150px; margin-top: 1rem; border-radius: 4px; border: 1px solid #ddd; }
         .file-link { color: #0d6efd; text-decoration: none; }
         .file-link:hover { text-decoration: underline; }
     </style>
@@ -889,7 +1463,7 @@ EDIT_TEMPLATE = '''
                 <div class="col-md-4"><label>采购渠道</label><input type="text" name="channel" class="form-control" value="{{comp.channel}}"></div>
                 <div class="col-md-12"><label>备注</label><textarea name="remark" class="form-control" rows="2">{{comp.remark}}</textarea></div>
 
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <label>元器件图片（重新上传覆盖原有，勾选清空则删除）</label>
                     <input type="file" name="img" class="form-control" accept=".png,.jpg,.jpeg,.gif,.bmp,.webp">
                     {% if comp.img_path %}
@@ -905,7 +1479,7 @@ EDIT_TEMPLATE = '''
                     {% endif %}
                 </div>
 
-                <div class="col-md-6">
+                <div class="col-md-4">
                     <label>相关附件（重新上传覆盖原有，勾选清空则删除）</label>
                     <input type="file" name="attach" class="form-control" accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.csv">
                     {% if comp.attach_path %}
@@ -918,6 +1492,23 @@ EDIT_TEMPLATE = '''
                     </div>
                     {% else %}
                     <p class="text-muted mt-2">暂无附件</p>
+                    {% endif %}
+                </div>
+
+                <div class="col-md-4">
+                    <label>二维码管理</label>
+                    {% if comp.qrcode_path %}
+                    <div class="mt-2">
+                        <a href="/{{comp.qrcode_path}}" target="_blank"><img src="/{{comp.qrcode_path}}" class="qrcode-preview"></a>
+                        <div class="d-flex gap-2 mt-2">
+                            <a href="{{url_for('regenerate_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-info btn-sm">重新生成</a>
+                            <a href="{{url_for('delete_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-danger btn-sm" onclick="return confirm('确定删除二维码？')">删除</a>
+                        </div>
+                        <p class="text-muted small mt-1">扫描二维码查看元器件信息</p>
+                    </div>
+                    {% else %}
+                    <p class="text-muted mt-2">暂无二维码</p>
+                    <a href="{{url_for('generate_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-success btn-sm">生成二维码</a>
                     {% endif %}
                 </div>
             </div>
@@ -933,7 +1524,7 @@ EDIT_TEMPLATE = '''
 </html>
 '''
 
-# BOM批量导入模板【三选项：跳过/合并/依旧导入，保留数量/单位独立映射】
+# BOM批量导入模板（修复：添加加载中转页面和步骤指示器）
 BOM_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -952,13 +1543,115 @@ BOM_TEMPLATE = '''
         .hidden { display: none; }
         .duplicate-item { padding: 1rem; border: 1px solid #ffc107; border-radius: 6px; background: #fff3cd; margin-bottom: 1rem; }
         .duplicate-title { font-weight: bold; color: #d97706; }
+        .preview-container { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 0.5rem; border-radius: 4px; }
+        .import-detail { background: #f8f9fa; padding: 1rem; border-radius: 6px; border-left: 4px solid #0d6efd; }
+        .import-detail p { margin: 0.3rem 0; }
+        .alert { 
+            position: fixed; top: 80px; right: 20px; z-index: 9999; 
+            min-width: 320px; max-width: 400px; margin: 0; padding: 0.8rem 1.2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        /* 加载动画样式 */
+        .spinner-border {
+            animation: spinner-border 0.75s linear infinite;
+        }
+        @keyframes spinner-border {
+            to { transform: rotate(360deg); }
+        }
+        /* 步骤指示器 */
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            position: relative;
+        }
+        .step-indicator::before {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 10%;
+            right: 10%;
+            height: 2px;
+            background: #dee2e6;
+            z-index: 1;
+        }
+        .step-item {
+            text-align: center;
+            position: relative;
+            z-index: 2;
+            flex: 1;
+        }
+        .step-number {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #dee2e6;
+            color: #6c757d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 0.5rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        .step-item.active .step-number {
+            background: #0d6efd;
+            color: white;
+            transform: scale(1.1);
+        }
+        .step-label {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        .step-item.active .step-label {
+            color: #0d6efd;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h4 class="text-primary mb-4">BOM批量导入</h4>
-        <div class="alert alert-info mb-4">
-            💡 仅需映射「品类、型号规格、封装」3个必填字段，表格内重复数据自动去重，库内重复数据支持「跳过/合并（数量相加）/依旧导入（覆盖原有）」
+        <!-- 步骤指示器 -->
+        <div class="step-indicator mb-4">
+            <div class="step-item active" data-step="1">
+                <div class="step-number">1</div>
+                <div class="step-label">选择导入方式</div>
+            </div>
+            <div class="step-item" data-step="2">
+                <div class="step-number">2</div>
+                <div class="step-label">字段映射</div>
+            </div>
+            <div class="step-item" data-step="3">
+                <div class="step-number">3</div>
+                <div class="step-label">处理重复</div>
+            </div>
+            <div class="step-item" data-step="4">
+                <div class="step-number">4</div>
+                <div class="step-label">完成导入</div>
+            </div>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for c, m in messages %}
+                    <div class="alert alert-{{c}} alert-dismissible fade show auto-close" role="alert" data-delay="3000">
+                        {{m}}<button class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 步骤0：加载中转页面 -->
+        <div class="step hidden" id="step0">
+            <h5 class="text-secondary">数据加载中...</h5>
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                    <span class="visually-hidden">加载中...</span>
+                </div>
+                <p class="mt-3">正在处理导入数据，请稍候...</p>
+                <p class="text-muted small">这可能需要几秒钟时间，具体取决于数据量大小</p>
+            </div>
         </div>
 
         <!-- 步骤1：选择导入方式 -->
@@ -984,6 +1677,28 @@ BOM_TEMPLATE = '''
         <!-- 步骤2：字段映射 -->
         <div class="step hidden" id="step2">
             <h5 class="text-secondary">步骤2：字段映射（红色为必填）</h5>
+            <!-- 数据统计信息 -->
+            <div class="alert alert-light mb-3" id="dataStats">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        📊 数据统计：共 <span class="badge bg-primary" id="rowCount">0</span> 条数据， 
+                        <span class="badge bg-secondary" id="colCount">0</span> 列
+                    </div>
+                    <div class="text-muted small">显示前3行预览数据</div>
+                </div>
+            </div>
+
+            <!-- 前三行预览 -->
+            <div class="mb-3">
+                <h6>前三行数据预览：</h6>
+                <div class="preview-container" id="previewContainer">
+                    <table class="table table-sm table-bordered">
+                        <thead id="previewHeader"></thead>
+                        <tbody id="previewBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
             <div class="table-responsive mt-3">
                 <table class="table table-bordered mapping-table">
                     <thead class="table-dark">
@@ -1009,8 +1724,11 @@ BOM_TEMPLATE = '''
 
         <!-- 步骤3：重复数据处理 -->
         <div class="step hidden" id="step3">
-            <h5 class="text-secondary">步骤3：重复数据处理（<span id="dupCount">0</span>条重复，<span id="uniCount">0</span>条全新）</h5>
-            <div id="noDup" class="alert alert-success hidden">🎉 无重复数据，可直接导入！</div>
+            <h5 class="text-secondary">步骤3：重复数据处理</h5>
+            <div class="alert alert-info mb-3">
+                检测结果：共<span id="totalCount">0</span>条数据，其中<span id="dupCount" class="text-warning fw-bold">0</span>条重复，<span id="newCount" class="text-success fw-bold">0</span>条新增
+            </div>
+            <div id="noDup" class="alert alert-success hidden">🎉 无重复数据，所有数据均为新增！</div>
             <div id="dupList" class="mt-3"></div>
             <div class="mt-3">
                 <button class="btn btn-secondary" onclick="backToStep2()">返回上一步</button>
@@ -1018,11 +1736,146 @@ BOM_TEMPLATE = '''
             </div>
         </div>
 
-        <!-- 步骤4：导入完成 -->
+        <!-- 步骤4：导入完成（修改：显示完整导入详情） -->
         <div class="step hidden" id="step4">
             <h5 class="text-secondary">步骤4：导入完成</h5>
+            {% if import_res %}
+            <div class="import-detail mb-4">
+                <h6>📋 导入结果详情：</h6>
+                <p><strong>总计处理：</strong>{{import_res.total}} 条数据</p>
+                <p><strong>新增数据：</strong><span class="text-success fw-bold">{{import_res.added}}</span> 条（全新元器件）</p>
+                <p><strong>合并数量：</strong><span class="text-warning fw-bold">{{import_res.merged}}</span> 条（与库内数据数量相加）</p>
+                <p><strong>覆盖更新：</strong><span class="text-info fw-bold">{{import_res.covered}}</span> 条（替换库内原有数据）</p>
+                <p><strong>跳过数据：</strong><span class="text-secondary fw-bold">{{import_res.skipped}}</span> 条（保留库内原有数据）</p>
+
+                <!-- 验证总数是否匹配 -->
+                <div class="mt-3 p-2 border rounded {% if import_res.added + import_res.merged + import_res.covered + import_res.skipped == import_res.total %}bg-success-subtle{% else %}bg-danger-subtle{% endif %}">
+                    <p class="mb-1"><strong>数据验证：</strong>
+                        新增({{import_res.added}}) + 合并({{import_res.merged}}) + 覆盖({{import_res.covered}}) + 跳过({{import_res.skipped}}) = 
+                        <span class="fw-bold">{{import_res.added + import_res.merged + import_res.covered + import_res.skipped}}</span>
+                        {% if import_res.added + import_res.merged + import_res.covered + import_res.skipped == import_res.total %}
+                        ✅ 与总计({{import_res.total}}) 匹配
+                        {% else %}
+                        ❌ 与总计({{import_res.total}}) 不匹配
+                        {% endif %}
+                    </p>
+                </div>
+
+                {% if import_res.new_items %}
+                <div class="mt-3">
+                    <h6>📦 新增元器件详情 ({{import_res.new_items|length}}个)：</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>序号</th>
+                                    <th>品类</th>
+                                    <th>型号规格</th>
+                                    <th>封装</th>
+                                    <th>数量</th>
+                                    <th>位置</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in import_res.new_items %}
+                                <tr>
+                                    <td>{{loop.index}}</td>
+                                    <td>{{item.category}}</td>
+                                    <td>{{item.model}}</td>
+                                    <td>{{item.package}}</td>
+                                    <td>{{item.quantity}} {{item.unit}}</td>
+                                    <td>{{item.location}}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if import_res.updated_items %}
+                <div class="mt-3">
+                    <h6>🔄 更新元器件详情 ({{import_res.updated_items|length}}个)：</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>序号</th>
+                                    <th>品类</th>
+                                    <th>型号规格</th>
+                                    <th>封装</th>
+                                    <th>更新类型</th>
+                                    <th>数量变化</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in import_res.updated_items %}
+                                <tr>
+                                    <td>{{loop.index}}</td>
+                                    <td>{{item.category}}</td>
+                                    <td>{{item.model}}</td>
+                                    <td>{{item.package}}</td>
+                                    <td>
+                                        {% if item.type %}
+                                        {{item.type}}
+                                        {% elif item.old_quantity is defined %}
+                                        合并数量
+                                        {% else %}
+                                        覆盖更新
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if item.old_quantity is defined and item.new_quantity is defined %}
+                                        {{item.old_quantity}} → {{item.new_quantity}}
+                                        {% else %}
+                                        -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if import_res.skipped_items %}
+                <div class="mt-3">
+                    <h6>⏭️ 跳过的元器件 ({{import_res.skipped_items|length}}个)：</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>序号</th>
+                                    <th>品类</th>
+                                    <th>型号规格</th>
+                                    <th>封装</th>
+                                    <th>原因</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in import_res.skipped_items %}
+                                <tr>
+                                    <td>{{loop.index}}</td>
+                                    <td>{{item.category}}</td>
+                                    <td>{{item.model}}</td>
+                                    <td>{{item.package}}</td>
+                                    <td>{{item.reason}}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
             <div class="alert alert-success">
-                🎉 导入成功！总处理<span id="total">0</span>条，新增<span id="add">0</span>条，合并<span id="merge">0</span>条，覆盖<span id="cover">0</span>条，跳过<span id="skip">0</span>条
+                🎉 导入成功！总处理<span id="total">{{import_res.total if import_res else 0}}</span>条，
+                新增<span id="add">{{import_res.added if import_res else 0}}</span>条，
+                合并<span id="merge">{{import_res.merged if import_res else 0}}</span>条，
+                覆盖<span id="cover">{{import_res.covered if import_res else 0}}</span>条，
+                跳过<span id="skip">{{import_res.skipped if import_res else 0}}</span>条
             </div>
             <div class="mt-3">
                 <button class="btn btn-secondary" onclick="backToStep1()">重新导入</button>
@@ -1036,21 +1889,67 @@ BOM_TEMPLATE = '''
             <input type="hidden" name="mapping" id="mapping">
             <input type="hidden" name="batch_vals" id="batchVals">
             <input type="hidden" name="dup_oper" id="dupOper">
+            <input type="hidden" name="unique_data" id="uniqueData">
         </form>
     </div>
 
     <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
     <script>
-        let parseRes = {columns:[], preview:[], raw_data:[], error:''};
+        let parseRes = {columns:[], preview:[], raw_data:[], error:'', row_count:0};
         let mapping = {};
         let dupData = [];
-        let uniData = [];
+        let newData = [];
 
         // 步骤切换
-        function showStep(s) {document.querySelectorAll('.step').forEach(el => el.classList.add('hidden')); document.getElementById('step'+s).classList.remove('hidden');}
-        function backToStep1() {showStep(1); parseRes = {columns:[], preview:[], raw_data:[], error:''};}
+        function showStep(s, showLoading = false) {
+            // 更新步骤指示器
+            document.querySelectorAll('.step-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            if (s > 0) {
+                const stepItem = document.querySelector(`.step-item[data-step="${s}"]`);
+                if (stepItem) {
+                    stepItem.classList.add('active');
+                }
+            }
+
+            if (showLoading) {
+                // 显示加载中转页面
+                document.querySelectorAll('.step').forEach(el => el.classList.add('hidden'));
+                document.getElementById('step0').classList.remove('hidden');
+
+                // 延迟显示目标步骤
+                setTimeout(() => {
+                    document.getElementById('step0').classList.add('hidden');
+                    if (s > 0) {
+                        document.getElementById('step'+s).classList.remove('hidden');
+                    }
+                }, 800);
+            } else {
+                document.querySelectorAll('.step').forEach(el => el.classList.add('hidden'));
+                if (s > 0) {
+                    document.getElementById('step'+s).classList.remove('hidden');
+                }
+            }
+        }
+
+        function backToStep1() {showStep(1); parseRes = {columns:[], preview:[], raw_data:[], error:'', row_count:0};}
         function backToStep2() {showStep(2);}
         function closeWin() {window.opener.location.reload(); window.close();}
+
+        // 自动关闭提示框
+        function initAutoClose() {
+            document.querySelectorAll('.auto-close').forEach(alertEl => {
+                const delay = alertEl.getAttribute('data-delay') || 3000;
+                setTimeout(() => {
+                    if (alertEl) {
+                        const bsAlert = new bootstrap.Alert(alertEl);
+                        bsAlert.close();
+                    }
+                }, parseInt(delay));
+            });
+        }
 
         // 解析数据
         function parseData(type) {
@@ -1070,39 +1969,90 @@ BOM_TEMPLATE = '''
             .then(data => {
                 if (data.code !== 1) {alert(data.error); return;}
                 parseRes = data.data;
+                // 显示读取了多少行数据
+                alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据`);
                 renderMapping();
-                showStep(2);
+                showStep(2, true); // 显示加载中转后跳转到步骤2
+                initAutoClose();
             }).catch(err => alert('解析失败：'+err.message));
         }
 
-        // 渲染映射表格
+        // 渲染映射表格和预览
         function renderMapping() {
             let tbody = document.getElementById('mappingTbody');
             tbody.innerHTML = '';
             mapping = {};
             let fields = {{SYSTEM_FIELDS|tojson}};
+
+            // 更新数据统计
+            document.getElementById('rowCount').innerText = parseRes.row_count;
+            document.getElementById('colCount').innerText = parseRes.columns.length;
+
+            // 渲染预览表格
+            renderPreview();
+
+            // 渲染映射表格
             parseRes.columns.forEach(col => {
                 mapping[col] = '';
                 let tr = document.createElement('tr');
                 // 表格列
-                let td1 = document.createElement('td'); td1.innerText = col; tr.appendChild(td1);
+                let td1 = document.createElement('td'); 
+                td1.innerText = col; 
+                tr.appendChild(td1);
                 // 下拉框
                 let td2 = document.createElement('td');
-                let select = document.createElement('select'); select.className = 'form-select form-select-sm';
+                let select = document.createElement('select'); 
+                select.className = 'form-select form-select-sm';
                 fields.forEach(f => {
                     let opt = document.createElement('option');
-                    opt.value = f[0]; opt.innerText = f[1];
-                    if (['category','model','package'].includes(f[0])) {opt.style.color = 'red'; opt.style.fontWeight = 'bold';}
+                    opt.value = f[0]; 
+                    opt.innerText = f[1];
+                    if (['category','model','package'].includes(f[0])) {
+                        opt.style.color = 'red'; 
+                        opt.style.fontWeight = 'bold';
+                    }
                     select.appendChild(opt);
                 });
                 select.onchange = function() {mapping[col] = this.value;};
-                td2.appendChild(select); tr.appendChild(td2);
+                td2.appendChild(select); 
+                tr.appendChild(td2);
                 // 预览
                 let td3 = document.createElement('td');
                 let val = parseRes.preview.length > 0 ? parseRes.preview[0][parseRes.columns.indexOf(col)] : '';
-                td3.innerText = val || '无'; tr.appendChild(td3);
+                td3.innerText = val || '无'; 
+                tr.appendChild(td3);
                 tbody.appendChild(tr);
             });
+        }
+
+        // 渲染预览表格
+        function renderPreview() {
+            const previewHeader = document.getElementById('previewHeader');
+            const previewBody = document.getElementById('previewBody');
+
+            previewHeader.innerHTML = '';
+            previewBody.innerHTML = '';
+
+            // 表头
+            let headerTr = document.createElement('tr');
+            parseRes.columns.forEach((col, idx) => {
+                let th = document.createElement('th');
+                th.innerText = `列${idx+1}: ${col}`;
+                headerTr.appendChild(th);
+            });
+            previewHeader.appendChild(headerTr);
+
+            // 表体（前三行）
+            const maxRows = Math.min(3, parseRes.preview.length);
+            for (let i = 0; i < maxRows; i++) {
+                let tr = document.createElement('tr');
+                parseRes.preview[i].forEach(cell => {
+                    let td = document.createElement('td');
+                    td.innerText = cell || '';
+                    tr.appendChild(td);
+                });
+                previewBody.appendChild(tr);
+            }
         }
 
         // 检测重复数据
@@ -1114,6 +2064,8 @@ BOM_TEMPLATE = '''
                 location: document.getElementById('batch_loc').value.trim() || '未知位置',
                 channel: document.getElementById('batch_chan').value.trim() || '未知'
             };
+            // 显示加载中转
+            showStep(0, true);
             // 提交检测
             let formData = new FormData();
             formData.append('raw_data', JSON.stringify(parseRes.raw_data));
@@ -1123,22 +2075,36 @@ BOM_TEMPLATE = '''
             .then(res => res.json())
             .then(data => {
                 if (data.code !== 1) {alert(data.error); return;}
-                dupData = data.data.duplicate;
-                uniData = data.data.unique;
+                dupData = data.data.duplicate || [];
+                newData = data.data.unique || [];
                 renderDup();
-                showStep(3);
-            }).catch(err => alert('检测失败：'+err.message));
+                showStep(3, true); // 显示加载中转后跳转到步骤3
+            }).catch(err => {
+                alert('检测失败：'+err.message);
+                showStep(2); // 出错时返回步骤2
+            });
         }
 
-        // 渲染重复数据【三选项：跳过/合并/依旧导入】
+        // 渲染重复数据【四选项：跳过/合并/依旧导入/新增一条】
         function renderDup() {
+            let total = dupData.length + newData.length;
+            document.getElementById('totalCount').innerText = total;
             document.getElementById('dupCount').innerText = dupData.length;
-            document.getElementById('uniCount').innerText = uniData.length;
+            document.getElementById('newCount').innerText = newData.length;
+
             let dupList = document.getElementById('dupList');
             let noDup = document.getElementById('noDup');
-            if (dupData.length === 0) {dupList.classList.add('hidden'); noDup.classList.remove('hidden'); return;}
-            dupList.classList.remove('hidden'); noDup.classList.add('hidden');
-            dupList.innerHTML = '';
+
+            if (dupData.length === 0) {
+                dupList.classList.add('hidden'); 
+                noDup.classList.remove('hidden'); 
+                return;
+            }
+
+            dupList.classList.remove('hidden'); 
+            noDup.classList.add('hidden');
+            dupList.innerHTML = '<h6>重复数据处理选项：</h6><p class="text-muted small">共检测到' + dupData.length + '条重复数据，请为每条数据选择处理方式：</p>';
+
             dupData.forEach((item, idx) => {
                 let div = document.createElement('div');
                 div.className = 'duplicate-item';
@@ -1148,16 +2114,18 @@ BOM_TEMPLATE = '''
                         <tr class="table-secondary">
                             <th>字段</th><th>库内原有</th><th>待导入</th><th>处理方式</th>
                         </tr>
-                        <tr><td>数量</td><td>${item.old_data.quantity} ${item.old_data.unit}</td><td>${item.data.quantity} ${item.data.unit}</td><td rowspan="4">
+                        <tr><td>数量</td><td>${item.old_data.quantity} ${item.old_data.unit}</td><td>${item.data.quantity} ${item.data.unit}</td><td rowspan="5">
                             <select class="form-select form-select-sm dupOper" data-id="${item.old_data.id}">
-                                <option value="merge" selected>合并（数量相加）</option>
                                 <option value="skip">跳过（保留原有）</option>
+                                <option value="merge" selected>合并（数量相加）</option>
                                 <option value="cover">依旧导入（覆盖原有）</option>
+                                <option value="new">新增一条（创建新记录）</option>
                             </select>
                         </td></tr>
                         <tr><td>供应商</td><td>${item.old_data.supplier}</td><td>${item.data.supplier}</td></tr>
-                        <tr><td>单价</td><td>¥${item.old_data.price.toFixed(2)}</td><td>¥${item.data.price.toFixed(2)}</td></tr>
+                        <tr><td>单价</td><td>¥${parseFloat(item.old_data.price).toFixed(2)}</td><td>¥${parseFloat(item.data.price).toFixed(2)}</td></tr>
                         <tr><td>位置</td><td>${item.old_data.location}</td><td>${item.data.location}</td></tr>
+                        <tr><td>备注</td><td>${item.old_data.remark}</td><td>${item.data.remark}</td></tr>
                     </table>
                 `;
                 dupList.appendChild(div);
@@ -1166,9 +2134,23 @@ BOM_TEMPLATE = '''
 
         // 执行导入
         function doImport() {
-            // 获取处理方式
+            // 获取重复数据的处理方式
             let dupOper = {};
-            document.querySelectorAll('.dupOper').forEach(sel => {dupOper[sel.dataset.id] = sel.value;});
+            let newItems = [];
+            document.querySelectorAll('.dupOper').forEach(sel => {
+                if (sel.value === 'new') {
+                    // 对于"新增一条"选项，将数据添加到newData中
+                    const oldId = sel.dataset.id;
+                    const dupItem = dupData.find(item => item.old_data.id == oldId);
+                    if (dupItem) {
+                        newData.push(dupItem.data);
+                    }
+                    dupOper[oldId] = 'skip'; // 原来的跳过
+                } else {
+                    dupOper[sel.dataset.id] = sel.value;
+                }
+            });
+
             // 获取批量值
             let batchVals = {
                 supplier: document.getElementById('batch_sup').value.trim() || '未知供应商',
@@ -1176,32 +2158,47 @@ BOM_TEMPLATE = '''
                 location: document.getElementById('batch_loc').value.trim() || '未知位置',
                 channel: document.getElementById('batch_chan').value.trim() || '未知'
             };
+
             // 赋值隐藏表单
             document.getElementById('rawData').value = JSON.stringify(parseRes.raw_data);
             document.getElementById('mapping').value = JSON.stringify(mapping);
             document.getElementById('batchVals').value = JSON.stringify(batchVals);
             document.getElementById('dupOper').value = JSON.stringify(dupOper);
-            // 提交
-            document.getElementById('importForm').submit();
+            document.getElementById('uniqueData').value = JSON.stringify(newData);
+
+            // 显示加载中转
+            showStep(0, true);
+
+            // 延迟提交表单，确保加载界面显示
+            setTimeout(() => {
+                document.getElementById('importForm').submit();
+            }, 1000);
         }
 
-        // 导入结果渲染【新增覆盖计数】
-        {% if import_res %}
-            window.onload = function() {
-                document.getElementById('total').innerText = {{import_res.total}};
-                document.getElementById('add').innerText = {{import_res.added}};
-                document.getElementById('merge').innerText = {{import_res.merged}};
-                document.getElementById('cover').innerText = {{import_res.covered}};
-                document.getElementById('skip').innerText = {{import_res.skipped}};
-                showStep(4);
-            }
-        {% endif %}
+        // 页面加载时初始化
+        window.onload = function() {
+            initAutoClose();
+            {% if import_res %}
+                // 导入完成时直接显示步骤4，不经过中转
+                document.querySelectorAll('.step').forEach(el => el.classList.add('hidden'));
+                // 更新步骤指示器
+                document.querySelectorAll('.step-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                const stepItem = document.querySelector('.step-item[data-step="4"]');
+                if (stepItem) {
+                    stepItem.classList.add('active');
+                }
+                document.getElementById('step4').classList.remove('hidden');
+                initAutoClose();
+            {% endif %}
+        }
     </script>
 </body>
 </html>
 '''
 
-# 备份恢复页面模板
+# 备份恢复页面模板（保持不变）
 RESTORE_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1220,7 +2217,7 @@ RESTORE_TEMPLATE = '''
     <div class="container">
         <h4 class="text-primary mb-4">备份恢复</h4>
         <div class="warn">
-            ⚠️ 警告：恢复操作会<strong>覆盖当前所有数据</strong>（数据库+图片+附件），请确保已备份当前重要数据后再执行！
+            ⚠️ 警告：恢复操作会<strong>覆盖当前所有数据</strong>（数据库+图片+附件+二维码），请确保已备份当前重要数据后再执行！
         </div>
         <form method="POST" enctype="multipart/form-data">
             <div class="mb-3">
@@ -1239,13 +2236,13 @@ RESTORE_TEMPLATE = '''
 </html>
 '''
 
-# -------------------------- 视图函数（修复参数解构+增加类型校验，无任何报错） --------------------------
+# -------------------------- 视图函数（修复BOM导入统计逻辑） --------------------------
 # 全局模板函数
 app.add_template_global(get_quantity_css, 'get_quantity_css')
 app.add_template_global(SYSTEM_FIELDS, 'SYSTEM_FIELDS')
 
 
-# 解析请求参数（稳定版，返回值固定，避免解构错误）
+# 解析请求参数
 def parse_args(req):
     selected = [s for s in req.args.get('selected', '').split(',') if s.strip().isdigit()]
     kw = req.args.get('kw', '').strip()
@@ -1268,7 +2265,6 @@ def parse_args(req):
 def index():
     selected, kw, adv_params = parse_args(request)
     query = Component.query
-    # 快速搜索
     if kw:
         query = query.filter(db.or_(
             Component.category.like(f'%{kw}%'),
@@ -1277,7 +2273,6 @@ def index():
             Component.supplier.like(f'%{kw}%'),
             Component.location.like(f'%{kw}%')
         ))
-    # 高级搜索
     if adv_params:
         if 'adv_cate' in adv_params: query = query.filter(Component.category.like(f'%{adv_params["adv_cate"]}%'))
         if 'adv_model' in adv_params: query = query.filter(Component.model.like(f'%{adv_params["adv_model"]}%'))
@@ -1298,11 +2293,10 @@ def index():
                                   )
 
 
-# 添加元器件
+# 添加元器件（修改：自动生成二维码）
 @app.route('/add', methods=['POST'])
 def add():
     selected, kw, _ = parse_args(request)
-    # 获取表单数据
     form = {
         'category': request.form.get('category', '').strip(),
         'model': request.form.get('model', '').strip(),
@@ -1316,24 +2310,23 @@ def add():
         'channel': request.form.get('channel', '未知').strip(),
         'remark': request.form.get('remark', '无').strip()
     }
-    # 检测重复（增加非空校验）
     if not form['category'] or not form['package']:
         flash("品类和封装为必填项！", "danger")
         return redirect(url_for('index', selected=','.join(selected), kw=kw))
-    if is_duplicate(form):
+    old_comp = is_duplicate(form)
+    if old_comp:
         flash("添加失败：该品类+封装的元器件已存在！", "danger")
         return redirect(url_for('index', selected=','.join(selected), kw=kw))
-    # 创建元器件
     comp = Component(**form)
     db.session.add(comp)
-    db.session.flush()  # 获取ID
-    # 保存文件
+    db.session.flush()
     pre = comp.get_file_prefix()
     comp.img_path = save_file(request.files.get('img'), IMG_FOLDER, ALLOWED_IMG_EXT, pre)
     comp.attach_path = save_file(request.files.get('attach'), ATTACH_FOLDER, ALLOWED_ATTACH_EXT, pre)
-    # 提交
+    # 自动生成二维码
+    generate_qrcode(comp)
     db.session.commit()
-    flash(f"元器件「{form['category']}-{form['model']}」添加成功！", "success")
+    flash(f"元器件「{form['category']}-{form['model']}」添加成功！已自动生成二维码。", "success")
     return redirect(url_for('index', selected=','.join(selected), kw=kw))
 
 
@@ -1344,7 +2337,6 @@ def edit(id):
     comp = Component.query.get_or_404(id)
     if request.method == 'GET':
         return render_template_string(EDIT_TEMPLATE, comp=comp, selected=selected, kw=kw)
-    # 保存修改
     form = {
         'category': request.form.get('category', '').strip(),
         'model': request.form.get('model', '').strip(),
@@ -1358,22 +2350,19 @@ def edit(id):
         'channel': request.form.get('channel', '未知').strip(),
         'remark': request.form.get('remark', '无').strip()
     }
-    # 检测重复（排除自身+非空校验）
     if not form['category'] or not form['package']:
         flash("品类和封装为必填项！", "danger")
         return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
-    dup = is_duplicate(form)
-    if dup and dup.id != id:
+    old_comp = is_duplicate(form)
+    if old_comp and old_comp.id != id:
         flash("修改失败：该品类+封装的元器件已存在！", "danger")
         return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
-    # 清空文件
     if request.form.get('clear_img'):
         delete_file(comp.img_path)
         comp.img_path = ''
     if request.form.get('clear_attach'):
         delete_file(comp.attach_path)
         comp.attach_path = ''
-    # 重新上传文件
     pre = comp.get_file_prefix()
     new_img = save_file(request.files.get('img'), IMG_FOLDER, ALLOWED_IMG_EXT, pre)
     new_attach = save_file(request.files.get('attach'), ATTACH_FOLDER, ALLOWED_ATTACH_EXT, pre)
@@ -1383,32 +2372,32 @@ def edit(id):
     if new_attach:
         delete_file(comp.attach_path)
         comp.attach_path = new_attach
-    # 更新字段
     for k, v in form.items():
         setattr(comp, k, v)
+    # 如果数据有修改，重新生成二维码
+    if any(getattr(comp, k) != v for k, v in form.items() if k != 'id'):
+        generate_qrcode(comp)
     db.session.commit()
-    flash(f"元器件「{comp.category}-{comp.model}」修改成功！", "success")
+    flash(f"元器件「{comp.category}-{comp.model}」修改成功！二维码已更新。", "success")
     return redirect(url_for('index', selected=','.join(selected), kw=kw))
 
 
-# 删除单个元器件
+# 删除单个元器件（修改：删除二维码）
 @app.route('/delete/<int:id>')
 def delete(id):
     selected, kw, _ = parse_args(request)
     comp = Component.query.get_or_404(id)
-    # 删除文件
     delete_file(comp.img_path)
     delete_file(comp.attach_path)
-    # 删除数据
+    delete_file(comp.qrcode_path)  # 删除二维码
     db.session.delete(comp)
     db.session.commit()
     flash(f"元器件「{comp.category}-{comp.model}」删除成功！", "success")
-    # 移除选中ID
     selected = [s for s in selected if s != str(id)]
     return redirect(url_for('index', selected=','.join(selected), kw=kw))
 
 
-# 批量删除
+# 批量删除（修改：删除二维码）
 @app.route('/batch_delete')
 def batch_delete():
     selected, kw, _ = parse_args(request)
@@ -1416,11 +2405,11 @@ def batch_delete():
     if not ids:
         flash("请选择要删除的元器件！", "danger")
         return redirect(url_for('index', selected=','.join(selected), kw=kw))
-    # 批量删除
     comps = Component.query.filter(Component.id.in_(ids)).all()
     for c in comps:
         delete_file(c.img_path)
         delete_file(c.attach_path)
+        delete_file(c.qrcode_path)  # 删除二维码
         db.session.delete(c)
     db.session.commit()
     flash(f"批量删除成功！共删除 {len(comps)} 条数据", "success")
@@ -1430,58 +2419,134 @@ def batch_delete():
 # 批量编辑
 @app.route('/batch_edit', methods=['POST'])
 def batch_edit():
-    # 修复参数解构：避免列表被当作字典，直接获取kw
     kw = request.args.get('kw', '').strip()
     ids = [int(i) for i in request.form.get('ids', '').split(',') if i.strip().isdigit()]
     if not ids:
         flash("请选择要编辑的元器件！", "danger")
         return redirect(url_for('index', kw=kw))
-    # 处理表单数据（仅非空字段）
     form = {}
     if request.form.get('supplier', '').strip(): form['supplier'] = request.form.get('supplier').strip()
     if request.form.get('quantity', '').strip():
         try:
             form['quantity'] = int(request.form.get('quantity'))
         except:
-            flash("批量数量必须为数字！", "danger"); return redirect(url_for('index', kw=kw))
+            flash("批量数量必须为数字！", "danger");
+            return redirect(url_for('index', kw=kw))
     if request.form.get('unit', '').strip(): form['unit'] = request.form.get('unit').strip()
     if request.form.get('location', '').strip(): form['location'] = request.form.get('location').strip()
     if request.form.get('price', '').strip():
         try:
             form['price'] = float(request.form.get('price'))
         except:
-            flash("批量单价必须为数字！", "danger"); return redirect(url_for('index', kw=kw))
+            flash("批量单价必须为数字！", "danger");
+            return redirect(url_for('index', kw=kw))
     if request.form.get('buy_time', '').strip(): form['buy_time'] = request.form.get('buy_time').strip()
     if request.form.get('channel', '').strip(): form['channel'] = request.form.get('channel').strip()
     if request.form.get('remark', '').strip(): form['remark'] = request.form.get('remark').strip()
-    # 无修改字段
     if not form:
         flash("请填写要修改的字段！", "warning")
         return redirect(url_for('index', kw=kw))
-    # 批量更新
     Component.query.filter(Component.id.in_(ids)).update(form, synchronize_session=False)
+
+    # 批量更新后重新生成二维码
+    comps = Component.query.filter(Component.id.in_(ids)).all()
+    for comp in comps:
+        generate_qrcode(comp)
+
     db.session.commit()
-    flash(f"批量编辑成功！共修改 {len(ids)} 条数据", "success")
+    flash(f"批量编辑成功！共修改 {len(ids)} 条数据，二维码已更新", "success")
     return redirect(url_for('index', selected=','.join([str(i) for i in ids]), kw=kw))
 
 
-# 导出/打印
+# 导出/打印（修改：支持导出二维码和图片）
 @app.route('/export', methods=['POST'])
 def export():
     kw = request.args.get('kw', '').strip()
     ids = [int(i) for i in request.form.get('ids', '').split(',') if i.strip().isdigit()]
     fields = request.form.getlist('fields')
     fmt = request.form.get('format', 'xlsx')
+    export_qrcode = request.form.get('export_qrcode') == '1'
+    export_img = request.form.get('export_img') == '1'
+
     if not ids or not fields:
         flash("请选择元器件和导出字段！", "danger")
         return redirect(url_for('index', kw=kw))
-    # 字段映射
+
+    # 如果是ZIP格式，打包导出
+    if fmt == 'zip':
+        try:
+            # 创建临时ZIP文件
+            zip_filename = f"元器件库存导出_{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
+            zip_path = os.path.join(BACKUP_FOLDER, zip_filename)
+
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # 1. 导出Excel数据
+                field_cn = {
+                    'category': '品类', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
+                    'quantity': '数量', 'unit': '单位', 'location': '存放位置', 'price': '采购单价(¥)',
+                    'buy_time': '采购时间', 'channel': '采购渠道', 'remark': '备注'
+                }
+                comps = Component.query.filter(Component.id.in_(ids)).all()
+                data = []
+                for c in comps:
+                    row = {}
+                    for f in fields:
+                        val = getattr(c, f, '')
+                        if f == 'price': val = round(float(val), 2)
+                        row[field_cn[f]] = val
+                    data.append(row)
+
+                # 创建Excel文件
+                df = pd.DataFrame(data)
+                excel_filename = f"元器件数据_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+                excel_buffer = BytesIO()
+                df.to_excel(excel_buffer, index=False, engine='openpyxl')
+                excel_buffer.seek(0)
+                zf.writestr(excel_filename, excel_buffer.getvalue())
+
+                # 2. 导出二维码
+                if export_qrcode:
+                    qrcode_count = 0
+                    for c in comps:
+                        qrcode_path = get_or_generate_qrcode(c.id)
+                        if qrcode_path and os.path.exists(os.path.join(BASE_DIR, qrcode_path)):
+                            zf.write(os.path.join(BASE_DIR, qrcode_path),
+                                     f"qrcodes/QR_{c.id}_{c.model.replace('/', '_')}.png")
+                            qrcode_count += 1
+
+                # 3. 导出图片
+                if export_img:
+                    img_count = 0
+                    for c in comps:
+                        if c.img_path and os.path.exists(os.path.join(BASE_DIR, c.img_path)):
+                            zf.write(os.path.join(BASE_DIR, c.img_path),
+                                     f"images/IMG_{c.id}_{c.model.replace('/', '_')}{os.path.splitext(c.img_path)[1]}")
+                            img_count += 1
+
+                # 4. 添加导出说明
+                readme = f"""元器件库存导出包
+导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+导出数量: {len(comps)} 个元器件
+包含内容:
+  - Excel数据文件: {excel_filename}
+  - 二维码文件: {qrcode_count if export_qrcode else 0} 个
+  - 元器件图片: {img_count if export_img else 0} 个
+"""
+                zf.writestr("README.txt", readme)
+
+            # 发送ZIP文件
+            return send_file(zip_path, mimetype='application/zip',
+                             as_attachment=True, download_name=zip_filename)
+        except Exception as e:
+            flash(f"打包导出失败：{str(e)}", "danger")
+            return redirect(url_for('index', kw=kw))
+
+    # 普通Excel/CSV导出
     field_cn = {
         'category': '品类', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
         'quantity': '数量', 'unit': '单位', 'location': '存放位置', 'price': '采购单价(¥)',
         'buy_time': '采购时间', 'channel': '采购渠道', 'remark': '备注'
     }
-    # 查询数据
     comps = Component.query.filter(Component.id.in_(ids)).all()
     data = []
     for c in comps:
@@ -1491,7 +2556,6 @@ def export():
             if f == 'price': val = round(float(val), 2)
             row[field_cn[f]] = val
         data.append(row)
-    # 生成文件
     df = pd.DataFrame(data)
     output = BytesIO()
     filename = f"元器件库存_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -1524,7 +2588,7 @@ def get_print_data():
     return jsonify({'code': 1, 'data': data})
 
 
-# 清理残留文件
+# 清理残留文件（修改：包含二维码）
 @app.route('/clean_residual')
 def clean_residual():
     selected, kw, _ = parse_args(request)
@@ -1533,13 +2597,13 @@ def clean_residual():
     return redirect(url_for('index', selected=','.join(selected), kw=kw))
 
 
-# 数据备份（修复路径+无数据友好提示，无报错）
-# 数据备份（修改：无下载弹窗，直接保存到默认目录，重定向回首页）
+# 数据备份
 @app.route('/backup')
 def backup():
     selected, kw, _ = parse_args(request)
-    backup_all_data()  # 仅执行备份，不处理返回路径
-    return redirect(url_for('index', selected=','.join(selected), kw=kw))  # 直接重定向，无弹窗
+    backup_all_data()
+    return redirect(url_for('index', selected=','.join(selected), kw=kw))
+
 
 # 备份恢复页面
 @app.route('/restore')
@@ -1548,7 +2612,7 @@ def restore_page():
     return render_template_string(RESTORE_TEMPLATE, kw=kw)
 
 
-# 执行备份恢复（修改：强制将db文件还原到instance目录，确保数据库生效）
+# 执行备份恢复
 @app.route('/restore', methods=['POST'])
 def do_restore():
     import tempfile
@@ -1559,30 +2623,24 @@ def do_restore():
         flash("请选择备份ZIP文件！", "danger")
         return redirect(url_for('restore_page', kw=kw))
 
-    # 1. 保存临时文件，避免文件占用
     temp_zip = os.path.join(tempfile.gettempdir(), f"temp_backup_{uuid.uuid4().hex[:8]}.zip")
     backup_zip.save(temp_zip)
 
-    # 2. 验证备份文件（必须包含component.db）
     is_valid, msg = validate_backup_zip(temp_zip)
     if not is_valid:
         os.remove(temp_zip)
         flash(f"备份文件验证失败：{msg}", "danger")
         return redirect(url_for('restore_page', kw=kw))
 
-    # 3. 创建临时解压目录
     temp_unzip = os.path.join(tempfile.gettempdir(), f"temp_unzip_{uuid.uuid4().hex[:8]}")
     os.makedirs(temp_unzip, exist_ok=True)
 
     try:
-        # 4. 解压备份包到临时目录
         with zipfile.ZipFile(temp_zip, 'r') as zf:
             zf.extractall(temp_unzip)
 
-        # 5. 核心修改：查找解压后的db文件，强制复制到instance目录
         db_temp_path = os.path.join(temp_unzip, 'component.db')
         if not os.path.exists(db_temp_path):
-            # 兼容旧备份包（可能db在其他路径），递归查找
             for root, _, files in os.walk(temp_unzip):
                 if 'component.db' in files:
                     db_temp_path = os.path.join(root, 'component.db')
@@ -1591,23 +2649,22 @@ def do_restore():
             flash("备份包中未找到数据库文件（component.db）！", "danger")
             return redirect(url_for('restore_page', kw=kw))
 
-        # 6. 覆盖instance目录下的db文件（先关闭可能的连接，强制覆盖）
         shutil.copy2(db_temp_path, DB_FILE)
         logger.info(f"数据库文件已从【{db_temp_path}】还原到【{DB_FILE}】")
 
-        # 7. 解压图片和附件到原有目录（BASE_DIR下的static）
         shutil.copytree(os.path.join(temp_unzip, 'static'), STATIC_FOLDER, dirs_exist_ok=True)
-        logger.info(f"图片/附件已还原到【{STATIC_FOLDER}】")
+        logger.info(f"图片/附件/二维码已还原到【{STATIC_FOLDER}】")
 
-        flash("数据恢复成功！已将数据库还原到instance目录，图片/附件还原到原路径，请刷新页面查看", "success")
+        flash("数据恢复成功！已将数据库还原到instance目录，图片/附件/二维码还原到原路径，请刷新页面查看", "success")
     except Exception as e:
         flash(f"恢复失败：{str(e)}", "danger")
         logger.error(f"恢复失败：{str(e)}")
     finally:
-        # 8. 清理临时文件，避免残留
         os.remove(temp_zip)
         shutil.rmtree(temp_unzip, ignore_errors=True)
     return redirect(url_for('index', kw=kw))
+
+
 # 开机自启
 @app.route('/auto_start/<op>')
 def auto_start(op):
@@ -1633,92 +2690,416 @@ def bom_import():
 def parse_bom_data():
     try:
         source_type = request.form.get('type', '')
+        if not source_type in ['paste', 'excel']:
+            return jsonify({'code': 0, 'error': '无效的导入类型'})
         source = request.form.get('paste_data', '') if source_type == 'paste' else request.files.get('excel_file')
-        columns, preview, raw_data, error = parse_table_data(source, source_type)
+        columns, preview, raw_data, error, row_count = parse_table_data(source, source_type)
         if error:
             return jsonify({'code': 0, 'error': error})
-        # 表格内去重
-        raw_data = remove_table_dup(raw_data)
-        return jsonify({'code': 1, 'data': {'columns': columns, 'preview': preview, 'raw_data': raw_data}})
+        return jsonify({
+            'code': 1,
+            'data': {
+                'columns': columns,
+                'preview': preview,
+                'raw_data': raw_data,
+                'row_count': row_count
+            }
+        })
     except Exception as e:
+        logger.error(f"BOM解析异常：{str(e)}")
         return jsonify({'code': 0, 'error': f"解析异常：{str(e)}"})
 
 
-# 检测BOM重复数据
 @app.route('/check_bom_dup', methods=['POST'])
 def check_bom_dup():
+    """
+    BOM重复检测接口：正确区分重复数据和新增数据
+    """
     try:
-        import json
-        raw_data = json.loads(request.form.get('raw_data', '[]'))
-        mapping = json.loads(request.form.get('mapping', '{}'))
-        batch_vals = json.loads(request.form.get('batch_vals', '{}'))
-        data_list, errors = map_table_data(raw_data, list(mapping.keys()), mapping, batch_vals)
+        # 接收并解析前端传参
+        raw_data_str = request.form.get('raw_data', '[]')
+        mapping_str = request.form.get('mapping', '{}')
+        batch_vals_str = request.form.get('batch_vals', '{}')
+
+        try:
+            raw_data = json.loads(raw_data_str)
+            mapping = json.loads(mapping_str)
+            batch_vals = json.loads(batch_vals_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败：{str(e)}")
+            return jsonify({'code': 0, 'error': f"数据格式错误：{str(e)}"})
+
+        # 验证数据格式
+        if not isinstance(raw_data, list) or not isinstance(mapping, dict):
+            return jsonify({'code': 0, 'error': "数据格式错误：原始数据必须是列表，映射必须是字典"})
+
+        # 获取列名（从mapping的键中提取）
+        columns = list(mapping.keys())
+
+        # 映射数据为字典列表
+        data_list, errors = map_table_data(raw_data, columns, mapping, batch_vals)
         if errors:
-            return jsonify({'code': 0, 'error': '；'.join(errors)})
-        # 分离重复和全新数据
-        duplicate, unique = [], []
-        for d in data_list:
-            old_comp = is_duplicate(d)
-            if old_comp:
-                duplicate.append({'data': d,
-                                  'old_data': {'id': old_comp.id, 'quantity': old_comp.quantity, 'unit': old_comp.unit,
-                                               'supplier': old_comp.supplier, 'price': old_comp.price,
-                                               'location': old_comp.location}})
+            return jsonify({'code': 0, 'error': '; '.join(errors)})
+
+        # 检测重复数据 - 正确区分重复和新增
+        duplicate = []  # 重复数据
+        unique = []  # 新增数据
+
+        for item in data_list:
+            old_component = is_duplicate(item)
+            if old_component:
+                # 获取完整的老数据信息
+                old_data = {
+                    'id': old_component.id,
+                    'category': old_component.category,
+                    'model': old_component.model,
+                    'package': old_component.package,
+                    'supplier': old_component.supplier,
+                    'quantity': old_component.quantity,
+                    'unit': old_component.unit,
+                    'location': old_component.location,
+                    'price': float(old_component.price),
+                    'buy_time': old_component.buy_time,
+                    'channel': old_component.channel,
+                    'remark': old_component.remark
+                }
+                duplicate.append({
+                    'old_data': old_data,
+                    'data': item
+                })
             else:
-                unique.append(d)
-        return jsonify({'code': 1, 'data': {'duplicate': duplicate, 'unique': unique}})
+                # 这是新增数据
+                unique.append(item)
+
+        # 记录日志
+        logger.info(f"BOM重复检测完成：共{len(data_list)}条，重复{len(duplicate)}条，新增{len(unique)}条")
+
+        # 返回结果
+        return jsonify({
+            'code': 1,
+            'data': {
+                'duplicate': duplicate,
+                'unique': unique
+            },
+            'error': ''
+        })
+
     except Exception as e:
-        return jsonify({'code': 0, 'error': f"检测异常：{str(e)}"})
+        logger.error(f"BOM重复检测失败：{str(e)}", exc_info=True)
+        return jsonify({
+            'code': 0,
+            'error': f"检测失败：{str(e)[:200]}"
+        })
 
 
-# 执行BOM导入（三选项逻辑：跳过/合并/覆盖）
+# 执行BOM导入（修复：正确统计各种操作类型）
 @app.route('/do_bom_import', methods=['POST'])
 def do_bom_import():
     try:
         import json
-        raw_data = json.loads(request.form.get('raw_data', '[]'))
-        mapping = json.loads(request.form.get('mapping', '{}'))
-        batch_vals = json.loads(request.form.get('batch_vals', '{}'))
-        dup_oper = json.loads(request.form.get('dup_oper', '{}'))
-        # 映射数据
-        data_list, errors = map_table_data(raw_data, list(mapping.keys()), mapping, batch_vals)
-        if errors:
+        # 解析JSON数据
+        try:
+            raw_data = json.loads(request.form.get('raw_data', '[]'))
+            mapping = json.loads(request.form.get('mapping', '{}'))
+            batch_vals = json.loads(request.form.get('batch_vals', '{}'))
+            dup_oper = json.loads(request.form.get('dup_oper', '{}'))
+            unique_data = json.loads(request.form.get('unique_data', '[]'))
+        except json.JSONDecodeError as e:
+            logger.error(f"BOM导入：JSON解析失败 {str(e)}")
+            flash("数据格式错误，导入失败", "danger")
             return render_template_string(BOM_TEMPLATE,
-                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0, 'skipped': 0})
-        # 统计
+                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
+                                                      'skipped': 0, 'new_items': [], 'updated_items': [],
+                                                      'skipped_items': []})
+
+        # 基础类型校验
+        if not isinstance(raw_data, list) or not isinstance(dup_oper, dict) or not isinstance(unique_data, list):
+            flash("数据格式错误，导入失败", "danger")
+            return render_template_string(BOM_TEMPLATE,
+                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
+                                                      'skipped': 0, 'new_items': [], 'updated_items': [],
+                                                      'skipped_items': []})
+
+        # 获取列名（从mapping的键中提取）
+        columns = list(mapping.keys())
+
+        # 映射数据（内部已完成表格去重）
+        data_list, errors = map_table_data(raw_data, columns, mapping, batch_vals)
+        if errors:
+            logger.error(f"BOM导入映射失败：{';'.join(errors)}")
+            flash(f"导入失败：{';'.join(errors)}", "danger")
+            return render_template_string(BOM_TEMPLATE,
+                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
+                                                      'skipped': 0, 'new_items': [], 'updated_items': [],
+                                                      'skipped_items': []})
+
+        # 初始化统计和详情
         total = len(data_list)
         added = merged = covered = skipped = 0
-        # 处理数据
+        new_items = []  # 新增的元器件
+        updated_items = []  # 更新的元器件
+        skipped_items = []  # 跳过的元器件
+
+        # 1. 先处理重复数据（根据用户选择的处理方式）
+        duplicate_data = []
         for d in data_list:
             old_comp = is_duplicate(d)
             if old_comp:
-                # 重复数据处理
-                op = dup_oper.get(str(old_comp.id), 'merge')
-                if op == 'skip':
-                    skipped += 1
-                    continue
-                elif op == 'merge':
-                    old_comp.quantity += d['quantity']
-                    merged += 1
-                elif op == 'cover':
-                    # 覆盖原有数据
-                    for k, v in d.items():
+                duplicate_data.append((old_comp, d))
+
+        for old_comp, new_data in duplicate_data:
+            op = dup_oper.get(str(old_comp.id), 'merge')
+            if op == 'skip':
+                skipped += 1
+                skipped_items.append({
+                    'category': old_comp.category,
+                    'model': old_comp.model,
+                    'package': old_comp.package,
+                    'reason': '用户选择跳过'
+                })
+                continue
+            elif op == 'merge':
+                # 记录原始数量
+                old_quantity = old_comp.quantity
+                # 数量相加，其余字段保留原有
+                old_comp.quantity += new_data.get('quantity', 0)
+                merged += 1
+                updated_items.append({
+                    'category': old_comp.category,
+                    'model': old_comp.model,
+                    'package': old_comp.package,
+                    'old_quantity': old_quantity,
+                    'new_quantity': old_comp.quantity,
+                    'type': '合并数量'
+                })
+            elif op == 'cover':
+                # 全量覆盖原有数据
+                for k, v in new_data.items():
+                    if hasattr(old_comp, k) and k != 'id':
                         setattr(old_comp, k, v)
-                    covered += 1
-                db.session.commit()
-            else:
-                # 全新数据
-                new_comp = Component(**d)
+                covered += 1
+                updated_items.append({
+                    'category': old_comp.category,
+                    'model': old_comp.model,
+                    'package': old_comp.package,
+                    'type': '覆盖更新'
+                })
+
+        # 2. 再处理新增数据（从unique_data中获取，这是前端传过来的新增数据）
+        for new_item in unique_data:
+            if isinstance(new_item, dict):
+                # 创建新的元器件
+                new_comp = Component(**new_item)
                 db.session.add(new_comp)
-                db.session.commit()
                 added += 1
-        # 导入结果
-        import_res = {'total': total, 'added': added, 'merged': merged, 'covered': covered, 'skipped': skipped}
+                new_items.append({
+                    'category': new_comp.category,
+                    'model': new_comp.model,
+                    'package': new_comp.package,
+                    'quantity': new_comp.quantity,
+                    'unit': new_comp.unit,
+                    'location': new_comp.location,
+                    'price': new_comp.price
+                })
+
+        # 3. 处理"新增一条"选项（从重复数据中创建新记录）
+        for old_comp, new_data in duplicate_data:
+            op = dup_oper.get(str(old_comp.id), 'merge')
+            if op == 'new':
+                # 创建新记录（稍微修改型号以避免唯一性冲突）
+                new_item_copy = new_data.copy()
+                # 在型号后添加时间戳以确保唯一性
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                new_item_copy['model'] = f"{new_item_copy['model']}_dup_{timestamp}"
+
+                new_comp = Component(**new_item_copy)
+                db.session.add(new_comp)
+                added += 1
+                new_items.append({
+                    'category': new_comp.category,
+                    'model': new_comp.model,
+                    'package': new_comp.package,
+                    'quantity': new_comp.quantity,
+                    'unit': new_comp.unit,
+                    'location': new_comp.location,
+                    'price': new_comp.price,
+                    'note': '从重复数据创建'
+                })
+
+        # 提交所有更改
+        db.session.commit()
+
+        # 为新添加的元器件生成二维码
+        new_comps = Component.query.filter(Component.qrcode_path == '').all()
+        qrcode_generated = 0
+        for comp in new_comps:
+            if generate_qrcode(comp):
+                qrcode_generated += 1
+
+        # 导入结果统计
+        import_res = {
+            'total': total,
+            'added': added,
+            'merged': merged,
+            'covered': covered,
+            'skipped': skipped,
+            'new_items': new_items,  # 显示所有新增
+            'updated_items': updated_items,  # 显示所有更新
+            'skipped_items': skipped_items,  # 显示所有跳过
+            'qrcode_generated': qrcode_generated
+        }
+
+        # 验证统计数据是否正确
+        calculated_total = added + merged + covered + skipped
+        if calculated_total != total:
+            logger.warning(f"统计数据不匹配：计算总数({calculated_total}) != 实际总数({total})")
+
+        logger.info(f"BOM导入完成：新增{added}，合并{merged}，覆盖{covered}，跳过{skipped}，总计{total}")
+
+        flash(
+            f"导入成功！共处理{total}条数据，新增{added}条，合并{merged}条，覆盖{covered}条，跳过{skipped}条，生成{qrcode_generated}个二维码",
+            "success")
+
         return render_template_string(BOM_TEMPLATE, import_res=import_res)
+
     except Exception as e:
-        logger.error(f"BOM导入失败：{str(e)}")
+        # 发生错误时回滚
+        db.session.rollback()
+        logger.error(f"BOM导入执行失败：{str(e)}", exc_info=True)
+        flash(f"导入失败：{str(e)}", "danger")
         return render_template_string(BOM_TEMPLATE,
-                                      import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0, 'skipped': 0})
+                                      import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
+                                                  'skipped': 0, 'new_items': [], 'updated_items': [],
+                                                  'skipped_items': []})
+
+
+# 二维码相关路由
+@app.route('/generate_qrcode/<int:id>')
+def generate_qrcode_route(id):
+    selected, kw, _ = parse_args(request)
+    comp = Component.query.get_or_404(id)
+    qrcode_path = generate_qrcode(comp)
+    if qrcode_path:
+        flash(f"二维码生成成功！", "success")
+    else:
+        flash("二维码生成失败", "warning")
+    return redirect(url_for('index', selected=','.join(selected), kw=kw))
+
+
+@app.route('/regenerate_qrcode/<int:id>')
+def regenerate_qrcode(id):
+    selected, kw, _ = parse_args(request)
+    comp = Component.query.get_or_404(id)
+    # 删除旧二维码
+    if comp.qrcode_path:
+        delete_file(comp.qrcode_path)
+    # 生成新二维码
+    qrcode_path = generate_qrcode(comp)
+    if qrcode_path:
+        flash(f"二维码重新生成成功！", "success")
+    else:
+        flash("二维码重新生成失败", "warning")
+    return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
+
+
+@app.route('/delete_qrcode/<int:id>')
+def delete_qrcode(id):
+    selected, kw, _ = parse_args(request)
+    comp = Component.query.get_or_404(id)
+    if comp.qrcode_path:
+        delete_file(comp.qrcode_path)
+        comp.qrcode_path = ''
+        db.session.commit()
+        flash("二维码删除成功", "success")
+    else:
+        flash("没有二维码可删除", "warning")
+    return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
+
+
+@app.route('/batch_generate_qrcodes')
+def batch_generate_qrcodes():
+    selected, kw, _ = parse_args(request)
+    ids = [int(i) for i in request.args.get('ids', '').split(',') if i.strip().isdigit()]
+
+    if not ids:
+        # 为所有元器件生成二维码
+        comps = Component.query.all()
+    else:
+        comps = Component.query.filter(Component.id.in_(ids)).all()
+
+    success_count = 0
+    for comp in comps:
+        if not comp.qrcode_path or not os.path.exists(os.path.join(BASE_DIR, comp.qrcode_path)):
+            if generate_qrcode(comp):
+                success_count += 1
+
+    flash(f"批量生成二维码完成！共为 {success_count}/{len(comps)} 个元器件生成二维码", "success")
+    return redirect(url_for('index', selected=','.join(selected), kw=kw))
+
+
+# 扫码读取接口
+@app.route('/scan_qrcode', methods=['POST'])
+def scan_qrcode():
+    try:
+        data = request.get_json()
+        qr_data = data.get('data', '')
+
+        # 解析二维码数据
+        try:
+            comp_data = json.loads(qr_data)
+            comp_id = comp_data.get('id')
+
+            if comp_id:
+                comp = Component.query.get(comp_id)
+                if comp:
+                    return jsonify({
+                        'code': 1,
+                        'data': {
+                            'id': comp.id,
+                            'category': comp.category,
+                            'model': comp.model,
+                            'package': comp.package,
+                            'supplier': comp.supplier,
+                            'quantity': comp.quantity,
+                            'unit': comp.unit,
+                            'location': comp.location,
+                            'price': comp.price,
+                            'buy_time': comp.buy_time,
+                            'channel': comp.channel,
+                            'remark': comp.remark,
+                            'img_path': comp.img_path,
+                            'qrcode_path': comp.qrcode_path
+                        }
+                    })
+
+            return jsonify({'code': 0, 'error': '未找到对应的元器件'})
+        except json.JSONDecodeError:
+            # 如果不是JSON，尝试按ID直接查找
+            if qr_data.isdigit():
+                comp = Component.query.get(int(qr_data))
+                if comp:
+                    return jsonify({
+                        'code': 1,
+                        'data': {
+                            'id': comp.id,
+                            'category': comp.category,
+                            'model': comp.model,
+                            'package': comp.package,
+                            'supplier': comp.supplier,
+                            'quantity': comp.quantity,
+                            'unit': comp.unit,
+                            'location': comp.location,
+                            'price': comp.price,
+                            'buy_time': comp.buy_time,
+                            'channel': comp.channel,
+                            'remark': comp.remark
+                        }
+                    })
+
+            return jsonify({'code': 0, 'error': '无效的二维码数据'})
+    except Exception as e:
+        logger.error(f"扫码读取失败：{str(e)}")
+        return jsonify({'code': 0, 'error': f'扫码读取失败：{str(e)}'})
 
 
 # 静态文件访问
@@ -1727,10 +3108,77 @@ def send_static(path):
     return send_from_directory(STATIC_FOLDER, path)
 
 
-# -------------------------- 程序入口（完整可运行，无任何报错） --------------------------
-if __name__ == '__main__':
+# -------------------------- 数据库迁移函数 --------------------------
+def migrate_database():
+    """检查并更新数据库表结构"""
     with app.app_context():
-        db.create_all()  # 首次运行自动创建数据库表
-        logger.info("数据库初始化完成，系统启动成功！")
-    # 启动服务（关闭debug，生产可用，如需调试改为debug=True）
+        try:
+            from sqlalchemy import inspect, text
+
+            # 创建inspector对象
+            inspector = inspect(db.engine)
+
+            # 检查表是否存在
+            if 'component' in inspector.get_table_names():
+                # 获取现有列
+                columns = [col['name'] for col in inspector.get_columns('component')]
+                logger.info(f"当前数据库列: {columns}")
+
+                # 检查是否缺少必要的列
+                missing_columns = []
+                expected_columns = ['id', 'category', 'model', 'package', 'supplier', 'quantity', 'unit',
+                                    'location', 'price', 'buy_time', 'channel', 'remark', 'img_path',
+                                    'attach_path', 'qrcode_path']
+
+                for col in expected_columns:
+                    if col not in columns:
+                        missing_columns.append(col)
+
+                if missing_columns:
+                    logger.info(f"检测到缺失的列: {missing_columns}")
+
+                    # 尝试添加缺失的列
+                    for col in missing_columns:
+                        if col == 'qrcode_path':
+                            try:
+                                db.session.execute(
+                                    text('ALTER TABLE component ADD COLUMN qrcode_path VARCHAR(255) DEFAULT ""'))
+                                logger.info(f"已添加列: {col}")
+                            except Exception as e:
+                                logger.error(f"添加列 {col} 失败: {e}")
+                    db.session.commit()
+                else:
+                    logger.info("数据库表结构完整")
+            else:
+                # 表不存在，创建新表
+                logger.info("component表不存在，将创建新表")
+                db.create_all()
+
+        except Exception as e:
+            logger.error(f"数据库迁移检查失败: {e}")
+            # 如果出错，重新创建所有表
+            try:
+                db.drop_all()
+                db.create_all()
+                logger.info("数据库表已重建")
+            except Exception as e2:
+                logger.error(f"重建数据库表失败: {e2}")
+
+
+# -------------------------- 程序入口 --------------------------
+if __name__ == '__main__':
+    # 确保instance目录存在
+    if not os.path.exists(app.instance_path):
+        os.makedirs(app.instance_path)
+        logger.info(f"自动创建instance目录：{app.instance_path}")
+
+    # 执行数据库迁移
+    migrate_database()
+
+    # 再次确保表存在
+    with app.app_context():
+        db.create_all()
+        logger.info("数据库表初始化完成")
+
+    # 启动Flask服务
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
