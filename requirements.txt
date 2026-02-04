@@ -1,0 +1,11 @@
+# requirements.txt
+numpy==1.24.3
+pandas==1.5.3
+flask==2.3.3
+flask-sqlalchemy==3.0.5
+sqlalchemy==2.0.19
+qrcode==7.4.2
+pillow==10.0.0
+openpyxl==3.1.2
+pywin32==306
+pyinstaller==5.13.0

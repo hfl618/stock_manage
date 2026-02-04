@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # -------------------------- 导入依赖（新增二维码和图片处理包） --------------------------
 import os
+import socket
 import sys
 import logging
 import zipfile
@@ -15,13 +16,13 @@ import pandas as pd
 import uuid
 import json
 import qrcode
-import base64
-from PIL import Image
-import io
-import time
+
+import os
+os.environ['FLASK_ENV'] = 'development'
+os.environ['FLASK_DEBUG'] = '1'
 
 # -------------------------- 基础配置（稳定版，修复数据库路径核心问题） --------------------------
-# 系统判断
+# 工具判断
 IS_WINDOWS = sys.platform.startswith('win')
 win32 = win32com.client if IS_WINDOWS else None
 
@@ -342,7 +343,7 @@ def get_startup_path():
 def is_auto_start():
     if not IS_WINDOWS or not win32:
         return False
-    lnk_path = os.path.join(get_startup_path(), "元器件库存管理系统.lnk")
+    lnk_path = os.path.join(get_startup_path(), "元器件库存管理工具.lnk")
     return os.path.exists(lnk_path)
 
 
@@ -352,7 +353,7 @@ def create_auto_start():
         startup = get_startup_path()
         if not startup:
             return False, "获取开机启动目录失败"
-        lnk_path = os.path.join(startup, "元器件库存管理系统.lnk")
+        lnk_path = os.path.join(startup, "元器件库存管理工具.lnk")
         shell = win32com.client.Dispatch("WScript.Shell")
         shortcut = shell.CreateShortCut(lnk_path)
         shortcut.TargetPath = sys.executable
@@ -369,7 +370,7 @@ def delete_auto_start():
     if not IS_WINDOWS or not is_auto_start():
         return True, "未开启开机自启"
     try:
-        os.remove(os.path.join(get_startup_path(), "元器件库存管理系统.lnk"))
+        os.remove(os.path.join(get_startup_path(), "元器件库存管理工具.lnk"))
         return True, "开机自启已关闭"
     except:
         return False, "关闭开机自启失败（请以管理员身份运行）"
@@ -559,7 +560,7 @@ MAIN_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>元器件库存管理系统 - 稳定版</title>
+    <title>元器件库存管理工具 - 稳定版</title>
     <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #f8f9fa; margin: 0; padding: 0; }
@@ -583,13 +584,41 @@ MAIN_TEMPLATE = '''
         .modal-backdrop { z-index: 1040 !important; }
         .modal { z-index: 1050 !important; }
         .show-qrcode .qrcode-column { display: table-cell; }  /* 显示二维码列的样式 */
+        /* 修复扫码弹窗样式 */
+        #videoElement {
+            transform: scaleX(1);
+        }
+        #scanOverlay {
+            animation: pulse 2s infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 70%;
+            height: 70%;
+            border: 2px solid red;
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+        @keyframes pulse {
+            0% { border-color: rgba(255, 0, 0, 0.7); }
+            50% { border-color: rgba(255, 0, 0, 1); }
+            100% { border-color: rgba(255, 0, 0, 0.7); }
+        }
+        #fileUploadArea.highlight {
+            animation: highlight 2s ease;
+        }
+        @keyframes highlight {
+            0% { background-color: rgba(13, 110, 253, 0.1); }
+            100% { background-color: transparent; }
+        }
     </style>
 </head>
 <body>
     <div class="top-nav">
-        <h4>元器件库存管理系统 - v1</h4>
+        <h4>元器件库存管理工具 - v1</h4>
         <div>
-            <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#settingModal">系统设置</a>
+            <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#settingModal">工具设置</a>
             <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#helpModal">使用说明</a>
             <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#qrcodeModal">扫码管理</a>
         </div>
@@ -795,7 +824,7 @@ MAIN_TEMPLATE = '''
                         <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                         <button type="reset" class="btn btn-light border">重置</button>
                         <button type="submit" class="btn btn-primary">
-                        <img src="/icon/search.png" class="search-icon" alt="搜索">搜索</button>
+                        搜索</button>
                     </div>
                 </form>
             </div>
@@ -872,12 +901,12 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 系统设置弹窗 -->
+    <!-- 工具设置弹窗 -->
     <div class="modal fade" id="settingModal" tabindex="-1">
         <div class="modal-dialog modal-md">
             <div class="modal-content">
                 <div class="modal-header bg-secondary text-white">
-                    <h5 class="modal-title">系统设置</h5>
+                    <h5 class="modal-title">工具设置</h5>
                     <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -914,70 +943,124 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 扫码管理弹窗（修改：改进苹果设备兼容性） -->
-    <div class="modal fade" id="qrcodeModal" tabindex="-1">
+    <!-- 扫码管理弹窗（修复版） -->
+    <div class="modal fade" id="qrcodeModal" tabindex="-1" data-bs-backdrop="static">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header bg-success text-white">
                     <h5 class="modal-title">扫码管理</h5>
-                    <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <button class="btn-close btn-close-white" data-bs-dismiss="modal" onclick="stopScanner()"></button>
                 </div>
                 <div class="modal-body">
                     <div class="row">
                         <div class="col-md-6">
                             <h6>📱 扫码读取元器件信息</h6>
                             <p class="text-muted small">使用手机扫描元器件二维码，快速查看详细信息</p>
-                            <div class="mb-3">
-                                <label>摄像头扫码（仅支持HTTPS或localhost）</label>
-                                <div id="reader" width="300px" style="display: none;"></div>
-                                <div id="cameraNotSupported" class="alert alert-warning">
-                                    <p><strong>⚠️ 摄像头扫码需要HTTPS环境或localhost</strong></p>
-                                    <p>在苹果设备上，请确保：</p>
-                                    <ol class="small">
-                                        <li>通过HTTPS访问本系统</li>
-                                        <li>或在localhost本地环境中使用</li>
-                                        <li>或使用文件上传方式</li>
-                                    </ol>
+
+                            <!-- 摄像头状态显示 -->
+                            <div id="cameraStatus" class="alert alert-info">
+                                <p><strong>📷 摄像头准备就绪</strong></p>
+                                <p>点击"开始扫描"启动摄像头</p>
+                            </div>
+
+                            <!-- 摄像头容器 -->
+                            <div id="cameraContainer" class="text-center" style="display: none;">
+                                <div id="videoContainer" style="position: relative; display: inline-block;">
+                                    <video id="videoElement" width="100%" style="max-width: 300px; border: 2px solid #0d6efd; border-radius: 4px; background: #000;"></video>
+                                    <div id="scanOverlay" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 70%; height: 70%; border: 2px solid red; box-sizing: border-box; pointer-events: none;"></div>
                                 </div>
-                                <div id="fileUploadArea" class="mt-3">
-                                    <label>上传二维码图片扫描：</label>
-                                    <input type="file" id="qrcodeFile" accept="image/*" class="form-control">
-                                    <button class="btn btn-primary btn-sm mt-2" onclick="scanQRCodeFromFile()">上传并扫描</button>
+                                <div id="scanControls" class="mt-3">
+                                    <button id="startScanBtn" class="btn btn-primary btn-sm" onclick="startScanner()">
+                                        <span class="spinner-border spinner-border-sm d-none" id="scanSpinner"></span>
+                                        <span id="scanBtnText">开始扫描</span>
+                                    </button>
+                                    <button id="stopScanBtn" class="btn btn-secondary btn-sm" onclick="stopScanner()" style="display: none;">停止扫描</button>
+                                    <button id="switchCameraBtn" class="btn btn-outline-secondary btn-sm" onclick="switchCamera()" style="display: none;">切换摄像头</button>
                                 </div>
-                                <div id="scanResult" class="mt-2 p-2 border rounded" style="min-height: 50px;"></div>
+                            </div>
+
+                            <!-- 文件上传区域 -->
+                            <div id="fileUploadArea" class="mt-3">
+                                <label class="fw-bold">📤 或上传二维码图片扫描：</label>
+                                <div class="input-group mt-2">
+                                    <input type="file" id="qrcodeFile" accept="image/*" class="form-control form-control-sm">
+                                    <button class="btn btn-primary btn-sm" onclick="scanQRCodeFromFile()">上传并扫描</button>
+                                </div>
+                                <p class="text-muted small mt-1">支持PNG、JPG格式的二维码图片</p>
+                            </div>
+
+                            <!-- 扫描结果区域 -->
+                            <div id="scanResult" class="mt-3 p-3 border rounded" style="min-height: 120px; background: #f8f9fa;">
+                                <h6>📋 扫描结果：</h6>
+                                <div id="resultContent" class="text-center text-muted py-3">
+                                    等待扫描结果...
+                                </div>
                             </div>
                         </div>
+
                         <div class="col-md-6">
                             <h6>📄 批量二维码操作</h6>
                             <div class="d-grid gap-2">
                                 <button class="btn btn-outline-primary" onclick="batchGenerateQRCodes()">批量生成二维码</button>
-                                <button class="btn btn-outline-secondary" onclick="openQRScanner()">打开扫码工具</button>
                                 <a href="{{url_for('batch_generate_qrcodes')}}" class="btn btn-outline-info">为所有元器件生成二维码</a>
                             </div>
-                            <div class="mt-3">
-                                <h6>扫码使用说明：</h6>
-                                <ol class="small">
-                                    <li><strong>手机扫码：</strong>使用微信/支付宝/手机相机扫描元器件二维码</li>
-                                    <li><strong>电脑扫码：</strong>使用摄像头扫描（需HTTPS或localhost环境）</li>
-                                    <li><strong>文件扫码：</strong>上传二维码图片文件进行识别</li>
-                                    <li>扫描后会显示元器件完整信息</li>
-                                    <li>支持库存盘点时快速查看</li>
-                                </ol>
+
+                            <div class="mt-4">
+                                <h6>💡 使用说明：</h6>
+                                <div class="accordion" id="qrHelpAccordion">
+                                    <div class="accordion-item">
+                                        <h6 class="accordion-header">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#qrMethod1">
+                                                方法1：摄像头扫码
+                                            </button>
+                                        </h6>
+                                        <div id="qrMethod1" class="accordion-collapse collapse">
+                                            <div class="accordion-body small">
+                                                <ol>
+                                                    <li>点击<b>"开始扫描"</b>按钮启动摄像头</li>
+                                                    <li>将二维码对准红色扫描框内</li>
+                                                    <li>工具会自动识别并显示元器件信息</li>
+                                                    <li>识别成功后可继续扫描下一个</li>
+                                                </ol>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="accordion-item">
+                                        <h6 class="accordion-header">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#qrMethod2">
+                                                方法2：上传图片扫描
+                                            </button>
+                                        </h6>
+                                        <div id="qrMethod2" class="accordion-collapse collapse">
+                                            <div class="accordion-body small">
+                                                <ol>
+                                                    <li>点击<b>"选择文件"</b>按钮</li>
+                                                    <li>选择保存的二维码图片</li>
+                                                    <li>点击<b>"上传并扫描"</b></li>
+                                                    <li>工具会自动解析二维码内容</li>
+                                                </ol>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="mt-3">
-                                <h6>苹果设备注意事项：</h6>
-                                <ul class="small text-warning">
-                                    <li>iOS Safari对摄像头权限控制严格</li>
-                                    <li>建议通过HTTPS访问本系统</li>
-                                    <li>或使用"上传二维码图片"功能</li>
-                                    <li>iPad支持使用"文件"App选择二维码图片</li>
+
+                            <!-- 设备兼容性提示 -->
+                            <div class="mt-4 alert alert-warning small">
+                                <h6>⚠️ 注意事项：</h6>
+                                <ul class="mb-0">
+                                    <li>请确保已授予浏览器摄像头权限</li>
+                                    <li>苹果设备需要使用Safari浏览器</li>
+                                    <li>确保摄像头未被其他程序占用</li>
+                                    <li>光线充足，二维码清晰无遮挡</li>
                                 </ul>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <button class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopScanner()">关闭</button>
                 </div>
             </div>
         </div>
@@ -1012,9 +1095,6 @@ MAIN_TEMPLATE = '''
             document.querySelectorAll('.compCheck').forEach(c => {
                 c.addEventListener('change', updateSelect);
             });
-
-            // 检查是否支持摄像头（iOS需要HTTPS）
-            checkCameraSupport();
         }
 
         // 获取选中ID
@@ -1095,182 +1175,311 @@ MAIN_TEMPLATE = '''
             }
         }
 
-        // 打开扫码工具
-        function openQRScanner() {
-            const modal = new bootstrap.Modal(document.getElementById('qrcodeModal'));
-            modal.show();
-        }
+        // ===================== 扫码功能修复 =====================
 
-        // 检查摄像头支持（解决iOS Safari问题）
-        function checkCameraSupport() {
-            const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            const isHttps = window.location.protocol === 'https:';
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        // 扫码相关变量
+        let videoStream = null;
+        let currentCamera = 'environment'; // 'user'为前置，'environment'为后置
+        let isScanning = false;
+        let codeReader = null;
 
-            // 显示用户友好的提示
-            const cameraNotSupportedDiv = document.getElementById('cameraNotSupported');
-            const readerDiv = document.getElementById('reader');
+        // 初始化扫码管理弹窗
+        document.getElementById('qrcodeModal').addEventListener('shown.bs.modal', function() {
+            console.log('扫码弹窗打开，初始化摄像头');
+            initCamera();
+        });
 
-            // 特别处理iOS Safari的兼容性问题
-            if ((isIOS && isSafari && !isHttps) || (!isLocalhost && !isHttps)) {
-                cameraNotSupportedDiv.innerHTML = `
+        document.getElementById('qrcodeModal').addEventListener('hidden.bs.modal', function() {
+            console.log('扫码弹窗关闭，清理资源');
+            stopScanner();
+        });
+
+        // 初始化摄像头
+        function initCamera() {
+            const cameraStatus = document.getElementById('cameraStatus');
+            const cameraContainer = document.getElementById('cameraContainer');
+
+            // 检查浏览器支持
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                cameraStatus.innerHTML = `
                     <div class="alert alert-warning">
-                        <p><strong>⚠️ 摄像头扫码需要HTTPS环境或localhost</strong></p>
-                        <p>苹果设备限制：</p>
-                        <ol class="small">
-                            <li>iOS Safari仅在HTTPS或localhost下允许摄像头访问</li>
-                            <li>请使用「上传二维码图片」功能</li>
-                            <li>或通过HTTPS访问本系统</li>
-                        </ol>
-                        <div class="mt-2">
-                            <button class="btn btn-primary btn-sm" onclick="showFileUpload()">使用文件上传</button>
-                        </div>
+                        <p><strong>⚠️ 浏览器不支持摄像头功能</strong></p>
+                        <p class="mb-0">请升级浏览器或使用文件上传方式</p>
                     </div>
                 `;
-                cameraNotSupportedDiv.style.display = 'block';
-                readerDiv.style.display = 'none';
                 return;
             }
 
-            // 显示摄像头区域
-            cameraNotSupportedDiv.style.display = 'none';
-            readerDiv.style.display = 'block';
-
-            // 延迟初始化摄像头，避免模态框未打开时初始化
-            if (isHttps || isLocalhost) {
-                setTimeout(() => {
-                    initQRScanner();
-                }, 500); // 增加延迟，确保模态框完全加载
-            }
-        }
-
-        // 新增：显示文件上传区域
-        function showFileUpload() {
-            const fileUploadArea = document.getElementById('fileUploadArea');
-            fileUploadArea.style.display = 'block';
-            fileUploadArea.innerHTML = `
-                <div class="alert alert-info">
-                    <h6>📱 文件扫码使用说明</h6>
-                    <ol class="small">
-                        <li>点击下方按钮选择二维码图片</li>
-                        <li>支持手机截图或保存的二维码图片</li>
-                        <li>点击"上传并扫描"按钮识别</li>
-                        <li>识别成功后会显示元器件信息</li>
-                    </ol>
-                </div>
-                <input type="file" id="qrcodeFile" accept="image/*" class="form-control" onchange="handleFileSelect(event)">
-                <button class="btn btn-primary btn-sm mt-2 w-100" onclick="scanQRCodeFromFile()">📤 上传并扫描</button>
-                <div id="fileScanResult" class="mt-2 p-2 border rounded" style="min-height: 60px;"></div>
-            `;
-        }
-
-        // 新增：处理文件选择
-        function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            // 显示文件信息
-            const fileInfo = document.createElement('div');
-            fileInfo.className = 'alert alert-light small mt-2';
-            fileInfo.innerHTML = `
-                <strong>已选择文件:</strong> ${file.name}<br>
-                <strong>文件大小:</strong> ${(file.size / 1024).toFixed(1)} KB<br>
-                <strong>文件类型:</strong> ${file.type || '未知'}
-            `;
-
-            const container = document.getElementById('fileUploadArea');
-            const oldInfo = container.querySelector('.file-info');
-            if (oldInfo) oldInfo.remove();
-            fileInfo.className += ' file-info';
-            container.insertBefore(fileInfo, container.querySelector('button'));
-        }
-
-        // 初始化扫码器（改进兼容性）
-        function initQRScanner() {
-            const readerDiv = document.getElementById('reader');
-            const cameraNotSupportedDiv = document.getElementById('cameraNotSupported');
-            const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            // 检查HTTPS/localhost（iOS要求）
+            const isLocalhost = window.location.hostname === 'localhost' || 
+                               window.location.hostname === '127.0.0.1';
             const isHttps = window.location.protocol === 'https:';
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-            // 检查是否支持摄像头API
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                cameraNotSupportedDiv.style.display = 'block';
-                readerDiv.style.display = 'none';
+            if (isIOS && !isHttps && !isLocalhost) {
+                cameraStatus.innerHTML = `
+                    <div class="alert alert-warning">
+                        <p><strong>⚠️ iOS设备限制</strong></p>
+                        <p>iOS设备需要HTTPS或localhost环境</p>
+                        <p class="mb-0">请使用文件上传方式扫描二维码</p>
+                    </div>
+                `;
                 return;
             }
 
-            // iOS Safari需要HTTPS或localhost
-            if (!isHttps && !isLocalhost) {
-                cameraNotSupportedDiv.style.display = 'block';
-                readerDiv.style.display = 'none';
-                return;
-            }
+            // 显示摄像头可用
+            cameraStatus.innerHTML = `
+                <div class="alert alert-success">
+                    <p><strong>✅ 摄像头可用</strong></p>
+                    <p class="mb-0">点击下方"开始扫描"按钮启动摄像头</p>
+                </div>
+            `;
+            cameraContainer.style.display = 'block';
+        }
 
-            // 显示摄像头区域
-            readerDiv.style.display = 'block';
-            cameraNotSupportedDiv.style.display = 'none';
+        // 启动扫码器
+        async function startScanner() {
+            console.log('开始启动扫码器...');
 
-            // 使用ZXing库代替html5-qrcode，提高兼容性
-            const codeReader = new ZXing.BrowserMultiFormatReader();
-            const videoElement = document.createElement('video');
-            videoElement.style.width = '100%';
-            videoElement.style.maxWidth = '300px';
-            videoElement.style.border = '1px solid #ddd';
-            videoElement.style.borderRadius = '4px';
-            readerDiv.appendChild(videoElement);
+            const startBtn = document.getElementById('startScanBtn');
+            const stopBtn = document.getElementById('stopScanBtn');
+            const switchBtn = document.getElementById('switchCameraBtn');
+            const spinner = document.getElementById('scanSpinner');
+            const btnText = document.getElementById('scanBtnText');
+            const videoElement = document.getElementById('videoElement');
+            const resultContent = document.getElementById('resultContent');
 
-            let isScanning = false;
+            try {
+                // 显示加载状态
+                startBtn.disabled = true;
+                spinner.classList.remove('d-none');
+                btnText.textContent = '准备中...';
+                resultContent.innerHTML = '<div class="text-primary"><span class="spinner-border spinner-border-sm"></span> 正在启动摄像头...</div>';
 
-            function startScanning() {
-                if (isScanning) return;
-
-                codeReader.decodeFromVideoDevice(null, videoElement, (result, err) => {
-                    if (result) {
-                        // 扫描成功
-                        onScanSuccess(result.getText());
-                        stopScanning();
-                    }
-                    if (err && !(err instanceof ZXing.NotFoundException)) {
-                        console.error('扫描错误:', err);
-                    }
-                }).then(() => {
-                    isScanning = true;
-                }).catch(err => {
-                    console.error('无法启动摄像头:', err);
-                    document.getElementById('scanResult').innerHTML = `
-                        <div class="alert alert-warning">
-                            <p>无法启动摄像头：${err.message}</p>
-                            <p>请检查摄像头权限，或使用文件上传功能</p>
-                        </div>
-                    `;
-                });
-            }
-
-            function stopScanning() {
-                if (isScanning) {
-                    codeReader.reset();
-                    isScanning = false;
+                // 停止之前的流
+                if (videoStream) {
+                    videoStream.getTracks().forEach(track => track.stop());
+                    videoStream = null;
                 }
+
+                // 获取摄像头权限
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: currentCamera,
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        frameRate: { ideal: 30 }
+                    }
+                });
+
+                console.log('摄像头权限获取成功');
+
+                // 设置视频元素
+                videoElement.srcObject = videoStream;
+                videoElement.setAttribute('playsinline', true); // iOS需要
+                videoElement.setAttribute('autoplay', true);
+                videoElement.setAttribute('muted', true);
+
+                // 等待视频加载
+                await new Promise((resolve) => {
+                    videoElement.onloadedmetadata = () => {
+                        videoElement.play();
+                        resolve();
+                    };
+                });
+
+                console.log('视频流播放成功');
+
+                // 初始化ZXing
+                codeReader = new ZXing.BrowserMultiFormatReader();
+
+                // 更新UI状态
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                switchBtn.style.display = 'inline-block';
+                spinner.classList.add('d-none');
+                btnText.textContent = '开始扫描';
+                startBtn.disabled = false;
+
+                // 开始解码
+                isScanning = true;
+                decodeContinuously();
+
+            } catch (error) {
+                console.error('启动摄像头失败:', error);
+
+                let errorMsg = error.message || '未知错误';
+                if (error.name === 'NotAllowedError') {
+                    errorMsg = '摄像头权限被拒绝，请允许摄像头访问';
+                } else if (error.name === 'NotFoundError') {
+                    errorMsg = '未找到摄像头设备';
+                } else if (error.name === 'NotReadableError') {
+                    errorMsg = '摄像头被其他程序占用';
+                }
+
+                resultContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p><strong>❌ 启动摄像头失败</strong></p>
+                        <p class="mb-2">${errorMsg}</p>
+                        <button class="btn btn-sm btn-outline-primary" onclick="useFileUpload()">改用文件上传</button>
+                    </div>
+                `;
+
+                // 重置UI
+                startBtn.disabled = false;
+                spinner.classList.add('d-none');
+                btnText.textContent = '开始扫描';
             }
+        }
 
-            // 开始扫描
-            startScanning();
+        // 连续解码
+        function decodeContinuously() {
+            if (!codeReader || !isScanning) return;
 
-            // 模态框关闭时停止扫描
-            document.getElementById('qrcodeModal').addEventListener('hidden.bs.modal', function () {
-                stopScanning();
+            const videoElement = document.getElementById('videoElement');
+            const resultContent = document.getElementById('resultContent');
+
+            codeReader.decodeFromVideoDevice(null, videoElement, (result, error) => {
+                if (result) {
+                    console.log('解码成功:', result.text);
+                    // 成功解码
+                    onScanSuccess(result.text);
+
+                    // 暂停2秒后继续扫描
+                    setTimeout(() => {
+                        if (isScanning) {
+                            decodeContinuously();
+                        }
+                    }, 2000);
+                    return;
+                }
+
+                if (error) {
+                    // 忽略"未找到二维码"的错误
+                    if (!(error instanceof ZXing.NotFoundException)) {
+                        console.warn('解码错误:', error);
+                    }
+                }
+
+                // 继续扫描
+                if (isScanning) {
+                    requestAnimationFrame(decodeContinuously);
+                }
             });
         }
 
+        // 停止扫码器
+        function stopScanner() {
+            console.log('停止扫码器');
+            isScanning = false;
+
+            // 停止视频流
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => {
+                    track.stop();
+                });
+                videoStream = null;
+            }
+
+            // 停止ZXing解码
+            if (codeReader) {
+                codeReader.reset();
+                codeReader = null;
+            }
+
+            // 重置UI
+            const startBtn = document.getElementById('startScanBtn');
+            const stopBtn = document.getElementById('stopScanBtn');
+            const switchBtn = document.getElementById('switchCameraBtn');
+            const videoElement = document.getElementById('videoElement');
+
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            switchBtn.style.display = 'none';
+            startBtn.disabled = false;
+            document.getElementById('scanSpinner').classList.add('d-none');
+            document.getElementById('scanBtnText').textContent = '开始扫描';
+
+            // 清空视频
+            videoElement.srcObject = null;
+            videoElement.pause();
+        }
+
+        // 切换摄像头
+        function switchCamera() {
+            currentCamera = currentCamera === 'environment' ? 'user' : 'environment';
+            stopScanner();
+            setTimeout(startScanner, 500);
+        }
+
+        // 扫描成功处理
+        function onScanSuccess(decodedText) {
+            const resultContent = document.getElementById('resultContent');
+            console.log('解析到的数据:', decodedText);
+
+            try {
+                const data = JSON.parse(decodedText);
+
+                resultContent.innerHTML = `
+                    <div class="alert alert-success">
+                        <h6>✅ 扫码成功！</h6>
+                        <div class="row mt-2">
+                            <div class="col-6">
+                                <p class="mb-1"><strong>ID：</strong>${data.id || 'N/A'}</p>
+                                <p class="mb-1"><strong>品类：</strong>${data.category || 'N/A'}</p>
+                                <p class="mb-1"><strong>型号：</strong>${data.model || 'N/A'}</p>
+                                <p class="mb-1"><strong>封装：</strong>${data.package || 'N/A'}</p>
+                            </div>
+                            <div class="col-6">
+                                <p class="mb-1"><strong>数量：</strong>${data.quantity || 0} ${data.unit || ''}</p>
+                                <p class="mb-1"><strong>位置：</strong>${data.location || 'N/A'}</p>
+                                <p class="mb-1"><strong>单价：</strong>¥${parseFloat(data.price || 0).toFixed(2)}</p>
+                                <p class="mb-1"><strong>供应商：</strong>${data.supplier || 'N/A'}</p>
+                            </div>
+                        </div>
+                        <div class="d-grid gap-2 mt-3">
+                            <a href="/edit/${data.id}" class="btn btn-sm btn-primary" target="_blank">
+                                📝 查看详情
+                            </a>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="continueScanning()">继续扫描</button>
+                        </div>
+                    </div>
+                `;
+
+            } catch (e) {
+                console.error('二维码解析失败:', e);
+                resultContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <p><strong>❌ 二维码解析失败</strong></p>
+                        <p class="small mb-2">可能原因：非本工具生成的二维码或数据格式错误</p>
+                        <p class="small mb-2">原始数据：${decodedText.substring(0, 100)}${decodedText.length > 100 ? '...' : ''}</p>
+                        <button class="btn btn-sm btn-secondary" onclick="continueScanning()">重新扫描</button>
+                    </div>
+                `;
+            }
+        }
+
+        // 继续扫描
+        function continueScanning() {
+            const resultContent = document.getElementById('resultContent');
+            resultContent.innerHTML = '<div class="text-primary"><span class="spinner-border spinner-border-sm"></span> 重新开始扫描...</div>';
+
+            setTimeout(() => {
+                if (isScanning) {
+                    decodeContinuously();
+                }
+            }, 500);
+        }
+
         // 从文件扫描二维码
-        function scanQRCodeFromFile() {
+        async function scanQRCodeFromFile() {
             const fileInput = document.getElementById('qrcodeFile');
             const file = fileInput.files[0];
-            const resultDiv = document.getElementById('fileScanResult');
+            const resultContent = document.getElementById('resultContent');
 
             if (!file) {
-                resultDiv.innerHTML = `
-                    <div class="alert alert-danger">
+                resultContent.innerHTML = `
+                    <div class="alert alert-warning">
                         <p>❌ 请先选择二维码图片文件</p>
                     </div>
                 `;
@@ -1278,104 +1487,58 @@ MAIN_TEMPLATE = '''
             }
 
             // 显示加载状态
-            resultDiv.innerHTML = `
-                <div class="text-center">
+            resultContent.innerHTML = `
+                <div class="text-center py-3">
                     <div class="spinner-border spinner-border-sm text-primary"></div>
                     <span class="ms-2">正在识别二维码...</span>
                 </div>
             `;
 
-            const codeReader = new ZXing.BrowserMultiFormatReader();
-            const img = new Image();
-
-            img.onload = function() {
-                codeReader.decodeFromImage(img)
-                    .then(result => {
-                        onScanSuccess(result.getText(), 'file');
-                    })
-                    .catch(err => {
-                        console.error('二维码识别失败:', err);
-                        resultDiv.innerHTML = `
-                            <div class="alert alert-danger">
-                                <p>❌ 二维码识别失败</p>
-                                <p class="small">原因: ${err.message || '无法识别二维码内容'}</p>
-                                <p class="small mt-2">请确保:</p>
-                                <ul class="small">
-                                    <li>图片清晰不模糊</li>
-                                    <li>二维码完整无遮挡</li>
-                                    <li>是本系统生成的二维码</li>
-                                </ul>
-                                <button class="btn btn-sm btn-secondary mt-2" onclick="scanQRCodeFromFile()">重新尝试</button>
-                            </div>
-                        `;
-                    });
-            };
-
-            img.onerror = function() {
-                resultDiv.innerHTML = `
-                    <div class="alert alert-danger">
-                        <p>❌ 图片加载失败</p>
-                        <p class="small">请选择有效的图片文件</p>
-                    </div>
-                `;
-            };
-
-            img.src = URL.createObjectURL(file);
-        }
-
-        // 扫描成功处理
-        function onScanSuccess(decodedText, source = 'camera') {
-            const resultContainer = source === 'file' ? 
-                document.getElementById('fileScanResult') : 
-                document.getElementById('scanResult');
-
             try {
-                const data = JSON.parse(decodedText);
-                resultContainer.innerHTML = `
-                    <div class="alert alert-success">
-                        <h6>✅ 扫码成功！元器件信息：</h6>
-                        <div class="row mt-2">
-                            <div class="col-6">
-                                <p class="mb-1"><strong>ID：</strong>${data.id}</p>
-                                <p class="mb-1"><strong>品类：</strong>${data.category}</p>
-                                <p class="mb-1"><strong>型号：</strong>${data.model}</p>
-                                <p class="mb-1"><strong>封装：</strong>${data.package}</p>
-                            </div>
-                            <div class="col-6">
-                                <p class="mb-1"><strong>数量：</strong>${data.quantity} ${data.unit}</p>
-                                <p class="mb-1"><strong>位置：</strong>${data.location}</p>
-                                <p class="mb-1"><strong>单价：</strong>¥${parseFloat(data.price).toFixed(2)}</p>
-                                <p class="mb-1"><strong>供应商：</strong>${data.supplier}</p>
-                            </div>
-                        </div>
-                        <div class="d-grid gap-2 mt-3">
-                            <a href="/edit/${data.id}" class="btn btn-sm btn-primary" target="_blank">
-                                📝 查看详情
-                            </a>
-                            <button class="btn btn-sm btn-secondary" onclick="${source === 'file' ? 'scanQRCodeFromFile()' : 'startScanning()'}">
-                                🔄 继续扫描
-                            </button>
-                        </div>
-                    </div>
-                `;
-            } catch (e) {
-                resultContainer.innerHTML = `
+                const codeReader = new ZXing.BrowserMultiFormatReader();
+                const img = new Image();
+
+                const result = await new Promise((resolve, reject) => {
+                    img.onload = function() {
+                        codeReader.decodeFromImage(img)
+                            .then(resolve)
+                            .catch(reject);
+                    };
+                    img.onerror = () => reject(new Error('图片加载失败'));
+                    img.src = URL.createObjectURL(file);
+                });
+
+                console.log('文件扫描成功:', result.text);
+                onScanSuccess(result.text);
+
+            } catch (err) {
+                console.error('二维码识别失败:', err);
+                resultContent.innerHTML = `
                     <div class="alert alert-danger">
-                        <p>❌ 二维码解析失败</p>
-                        <p class="small">原始数据：${decodedText.substring(0, 100)}...</p>
-                        <p class="small">错误：${e.message}</p>
-                        <button class="btn btn-sm btn-secondary mt-2" onclick="${source === 'file' ? 'scanQRCodeFromFile()' : 'startScanning()'}">
-                            重新扫描
-                        </button>
+                        <p>❌ 二维码识别失败</p>
+                        <p class="small mb-1">${err.message || '无法识别二维码内容'}</p>
+                        <button class="btn btn-sm btn-secondary" onclick="scanQRCodeFromFile()">重新尝试</button>
                     </div>
                 `;
             }
         }
 
-        // 重新开始扫描
-        function startScanning() {
-            document.getElementById('scanResult').innerHTML = '';
-            initQRScanner();
+        // 使用文件上传（备用方案）
+        function useFileUpload() {
+            const fileUploadArea = document.getElementById('fileUploadArea');
+            const qrcodeFile = document.getElementById('qrcodeFile');
+
+            // 高亮显示文件上传区域
+            fileUploadArea.style.border = '2px solid #0d6efd';
+            fileUploadArea.style.borderRadius = '8px';
+            fileUploadArea.style.padding = '15px';
+            fileUploadArea.style.transition = 'all 0.3s';
+
+            // 滚动到文件上传区域
+            fileUploadArea.scrollIntoView({ behavior: 'smooth' });
+
+            // 触发文件选择
+            qrcodeFile.click();
         }
 
         // 打印数据
@@ -1702,7 +1865,7 @@ BOM_TEMPLATE = '''
             <div class="table-responsive mt-3">
                 <table class="table table-bordered mapping-table">
                     <thead class="table-dark">
-                        <tr><th>表格列</th><th>映射为系统字段</th><th>预览数据</th></tr>
+                        <tr><th>表格列</th><th>映射为工具字段</th><th>预览数据</th></tr>
                     </thead>
                     <tbody id="mappingTbody"></tbody>
                 </table>
@@ -2223,7 +2386,7 @@ RESTORE_TEMPLATE = '''
             <div class="mb-3">
                 <label class="form-label">选择备份ZIP文件（来自backup目录）</label>
                 <input type="file" name="backup_zip" class="form-control" accept=".zip" required>
-                <div class="form-text mt-2">仅支持本系统生成的备份文件（命名以「元器件库存备份_」开头）</div>
+                <div class="form-text mt-2">仅支持本工具生成的备份文件（命名以「元器件库存备份_」开头）</div>
             </div>
             <div class="d-flex justify-content-between">
                 <a href="{{url_for('index', kw=kw)}}" class="btn btn-secondary">返回主界面</a>
@@ -3165,20 +3328,245 @@ def migrate_database():
                 logger.error(f"重建数据库表失败: {e2}")
 
 
-# -------------------------- 程序入口 --------------------------
+# -------------------------- 程序入口（智能浏览器检测与打开） --------------------------
 if __name__ == '__main__':
-    # 确保instance目录存在
-    if not os.path.exists(app.instance_path):
-        os.makedirs(app.instance_path)
-        logger.info(f"自动创建instance目录：{app.instance_path}")
+    # ... 之前的初始化代码保持不变 ...
 
-    # 执行数据库迁移
-    migrate_database()
+    # 导入必要的模块
+    import threading
+    import time
+    import subprocess
+    import sys
 
-    # 再次确保表存在
-    with app.app_context():
-        db.create_all()
-        logger.info("数据库表初始化完成")
+
+    def detect_available_browsers():
+        """检测工具中可用的浏览器"""
+        browsers = []
+
+        if IS_WINDOWS:
+            # Windows工具浏览器检测
+            browser_paths = [
+                ("Chrome", [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                    os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe")
+                ]),
+                ("Edge", [
+                    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+                ]),
+                ("Firefox", [
+                    r"C:\Program Files\Mozilla Firefox\firefox.exe",
+                    r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe"
+                ]),
+                ("Opera", [
+                    r"C:\Program Files\Opera\launcher.exe",
+                    r"C:\Program Files (x86)\Opera\launcher.exe"
+                ]),
+                ("Brave", [
+                    r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+                    r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
+                ])
+            ]
+        else:
+            # Linux/Mac工具浏览器检测
+            browser_paths = [
+                ("Chrome", ["google-chrome", "chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]),
+                ("Firefox", ["firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"]),
+                ("Safari", ["safari", "open -a Safari"]),
+                ("Edge", ["microsoft-edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]),
+                ("Opera", ["opera", "/Applications/Opera.app/Contents/MacOS/Opera"])
+            ]
+
+        # 检测可用的浏览器
+        for browser_name, paths in browser_paths:
+            for path in paths:
+                if isinstance(path, str) and (path.startswith("/") or "\\" in path or ":" in path):
+                    # 完整路径检测
+                    if os.path.exists(path):
+                        browsers.append((browser_name, path))
+                        break
+                else:
+                    # 命令检测（Linux/Mac）
+                    try:
+                        if IS_WINDOWS:
+                            # Windows命令检测
+                            if " " in path:
+                                # 有空格的需要特殊处理
+                                if os.path.exists(path.split()[0]):
+                                    browsers.append((browser_name, path))
+                                    break
+                            else:
+                                result = subprocess.run(['where', path], capture_output=True, text=True, shell=True)
+                                if result.returncode == 0 and result.stdout.strip():
+                                    browsers.append((browser_name, result.stdout.strip().split('\n')[0]))
+                                    break
+                        else:
+                            # Linux/Mac命令检测
+                            result = subprocess.run(['which', path], capture_output=True, text=True)
+                            if result.returncode == 0:
+                                browsers.append((browser_name, result.stdout.strip()))
+                                break
+                    except:
+                        continue
+
+        return browsers
+
+
+    def open_browser_smart():
+        """智能打开浏览器"""
+        time.sleep(2.5)  # 等待服务器启动
+
+        url = "http://localhost:5000"
+
+        print(f"\n{'=' * 80}")
+        print("元器件库存管理工具 - 服务已启动")
+        print("=" * 80)
+        print(f"🎯 服务地址: {url}")
+        print(f"🌐 网络地址: http://{get_local_ip()}:5000")
+        print("\n🔄 正在检测可用浏览器...")
+
+        # 检测可用浏览器
+        available_browsers = detect_available_browsers()
+
+        if available_browsers:
+            print(f"✓ 检测到 {len(available_browsers)} 个可用浏览器:")
+            for i, (name, path) in enumerate(available_browsers, 1):
+                print(f"  {i}. {name} ({os.path.basename(path)})")
+
+            # 按优先级尝试打开浏览器
+            browser_priority = ["Chrome", "Edge", "Firefox", "Brave", "Opera", "Safari"]
+            opened = False
+
+            for priority_name in browser_priority:
+                for browser_name, browser_path in available_browsers:
+                    if browser_name == priority_name:
+                        try:
+                            print(f"\n正在尝试打开 {browser_name}...")
+
+                            if IS_WINDOWS:
+                                # Windows: 使用完整路径
+                                subprocess.Popen([browser_path, '--new-window', url])
+                            else:
+                                # Linux/Mac: 根据路径类型处理
+                                if browser_path.startswith('/Applications'):
+                                    # Mac应用程序
+                                    subprocess.Popen(
+                                        ['open', '-a', browser_path.replace('/Contents/MacOS/', '').rsplit('/', 1)[0],
+                                         url])
+                                else:
+                                    # Linux可执行文件
+                                    subprocess.Popen([browser_path, '--new-window', url])
+
+                            print(f"✓ 已启动 {browser_name} 浏览器")
+                            opened = True
+                            break
+                        except Exception as e:
+                            print(f"✗ {browser_name} 启动失败: {e}")
+
+                if opened:
+                    break
+        else:
+            print("⚠ 未检测到常见浏览器")
+
+        # 如果特定浏览器打开失败，尝试工具默认方式
+        if not opened:
+            print("\n尝试使用工具默认方式打开...")
+            try:
+                # 方法1: 使用os.startfile (Windows)
+                if IS_WINDOWS:
+                    os.startfile(url)
+                    print("✓ 使用工具默认方式打开")
+                    opened = True
+                else:
+                    # 方法2: 使用webbrowser模块
+                    import webbrowser
+                    webbrowser.open_new(url)
+                    print("✓ 调用默认浏览器")
+                    opened = True
+            except Exception as e:
+                print(f"✗ 工具默认方式失败: {e}")
+
+        # 如果还是失败，提供详细指引
+        if not opened:
+            print("\n" + "!" * 80)
+            print("❌ 自动打开浏览器失败")
+            print("!" * 80)
+            print("\n请手动执行以下操作:")
+            print(f"1. 打开任意浏览器（Chrome/Edge/Firefox/360/QQ浏览器等）")
+            print(f"2. 在地址栏输入: {url}")
+            print(f"3. 或扫描下方二维码访问（如果支持）")
+
+            # 尝试生成访问二维码（可选）
+            try:
+                import qrcode
+                qr = qrcode.QRCode(version=1, box_size=2, border=2)
+                qr.add_data(url)
+                qr.make(fit=True)
+
+                print("\n访问二维码:")
+                qr.print_ascii(invert=True)
+            except:
+                pass
+
+            print("\n💡 提示: 按 Ctrl+C 停止服务器")
+            print("=" * 80)
+        else:
+            print(f"\n✅ 浏览器已成功打开!")
+            print(f"💡 如果页面没有显示，请手动访问: {url}")
+            print("=" * 80)
+
+
+    def get_local_ip():
+        """获取本地IP地址"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return '127.0.0.1'
+
+
+    # 显示启动信息
+    print("\n" + "=" * 80)
+    print("元器件库存管理工具 v1.0")
+    print("=" * 80)
+    print("🚀 启动流程:")
+    print("  ✓ 数据库初始化完成")
+    print("  ✓ 目录结构就绪")
+    print("  ▶ 启动Web服务器...")
+    print("  ⏳ 正在检测浏览器...")
+    print("=" * 80)
+
+    # 启动浏览器线程
+    browser_thread = threading.Thread(target=open_browser_smart, daemon=True)
+    browser_thread.start()
 
     # 启动Flask服务
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    except OSError as e:
+        if "Address already in use" in str(e):
+            print(f"⚠ 端口5000被占用，尝试5001端口...")
+
+
+            # 更新浏览器打开的URL
+            def open_on_5001():
+                time.sleep(2.5)
+                url_5001 = "http://localhost:5001"
+                try:
+                    if IS_WINDOWS:
+                        os.startfile(url_5001)
+                    else:
+                        import webbrowser
+                        webbrowser.open_new(url_5001)
+                    print(f"✓ 请在浏览器中访问: {url_5001}")
+                except:
+                    print(f"请手动访问: {url_5001}")
+
+
+            threading.Thread(target=open_on_5001, daemon=True).start()
+
+            app.run(debug=True, host='0.0.0.0', port=5000)
