@@ -31,10 +31,17 @@ win32 = win32com.client if IS_WINDOWS else None
 QUANTITY_WARN_LOW = 10  # ≤10 红色预警
 QUANTITY_WARN_MID = 20  # 11-20 黄色预警
 
-# 日志配置
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
+# 日志配置
+logging.basicConfig(
+    level=logging.DEBUG,  # 改为DEBUG以便查看更多信息
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('component_stock.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 # -------------------------- PyInstaller打包+源码 路径统一兼容（核心） --------------------------
 if hasattr(sys, '_MEIPASS'):
     BASE_DIR = sys._MEIPASS  # 打包后用临时资源目录
@@ -569,22 +576,22 @@ SYSTEM_FIELDS = [
     ('', '不映射（跳过）'),
     ('category', '品类【必填】'),
     ('type', '类别'),
-    ('model', '型号规格【必填】'),
     ('package', '封装【必填】'),
-    ('supplier', '供应商'),
+    ('model', '型号规格【必填】'),
     ('quantity', '数量'),
     ('unit', '单位'),
-    ('location', '存放位置'),
     ('price', '采购单价'),
-    ('buy_time', '采购时间'),
+    ('supplier', '供应商'),
     ('channel', '采购渠道'),
     ('remark', '备注'),
+    ('location', '存放位置'),
+    ('buy_time', '采购时间'),
 ]
 REQUIRED_FIELDS = ['category', 'model', 'package']
 
 
 def parse_table_data(source, source_type):
-    """解析粘贴/Excel数据"""
+    """解析粘贴/Excel数据 - 修复数值类型处理"""
     columns, preview, raw_data = [], [], []
     try:
         if source_type == 'paste':
@@ -597,26 +604,45 @@ def parse_table_data(source, source_type):
             for line in lines:
                 row = line.split('\t') + [''] * (col_num - len(line.split('\t')))
                 raw_data.append(row[:col_num])
-            preview = raw_data[:3]  # 只显示前三行
-            row_count = len(raw_data)  # 计算行数
+            preview = raw_data[:3]
+            row_count = len(raw_data)
+
         elif source_type == 'excel':
             if not allowed_file(source.filename, {'xlsx'}):
                 return columns, preview, raw_data, "仅支持xlsx格式Excel文件", 0
-            df = pd.read_excel(source, engine='openpyxl')
+
+            # 使用pandas读取，但保持原始数据类型
+            import pandas as pd
+            df = pd.read_excel(source, engine='openpyxl', dtype=str)  # 全部读取为字符串，防止类型转换
+
+            # 处理列名
             df.columns = [f'列{i + 1}' if pd.isna(c) or not str(c).strip() else str(c).strip() for i, c in
                           enumerate(df.columns)]
             columns = list(df.columns)
-            raw_data = df.fillna('').values.tolist()
-            preview = raw_data[:3]  # 只显示前三行
-            row_count = len(raw_data)  # 计算行数
+
+            # 转换为列表，并处理NaN值为空字符串
+            raw_data = df.where(pd.notnull(df), '').values.tolist()
+
+            # 创建预览数据（显示原始字符串格式）
+            preview = []
+            for i, row in enumerate(raw_data[:3]):
+                preview_row = []
+                for cell in row:
+                    # 保持字符串格式，不进行类型转换
+                    preview_row.append(str(cell) if cell is not None else '')
+                preview.append(preview_row)
+
+            row_count = len(raw_data)
+
         return columns, preview, raw_data, "", row_count
+
     except Exception as e:
-        logger.error(f"表格解析失败：{str(e)}")
+        logger.error(f"表格解析失败：{str(e)}", exc_info=True)
         return columns, preview, raw_data, f"解析失败：{str(e)}", 0
 
 
 def map_table_data(raw_data, columns, mapping, batch_vals):
-    """映射表格数据为字典列表"""
+    """映射表格数据为字典列表 - 修复数量处理"""
     data_list, errors = [], []
 
     if not isinstance(mapping, dict) or not isinstance(batch_vals, dict) or not isinstance(raw_data, list):
@@ -631,33 +657,63 @@ def map_table_data(raw_data, columns, mapping, batch_vals):
     if errors:
         return data_list, errors
 
-    # 处理批量值
+    # 处理批量值 - 修复数量处理
     batch = {}
     for k, v in batch_vals.items():
-        if not v:
+        if v is None or (isinstance(v, str) and not v.strip()):
             continue
         try:
             if k == 'quantity':
-                batch[k] = int(v)
+                # 尝试转换为整数
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v:
+                        try:
+                            # 移除可能的逗号（千位分隔符）
+                            v = v.replace(',', '')
+                            # 尝试转换为浮点数再转整数，处理"10.0"这种情况
+                            batch[k] = int(float(v))
+                        except (ValueError, TypeError):
+                            batch[k] = 0  # 转换失败设为0
+                    else:
+                        batch[k] = 0  # 空字符串设为0
+                else:
+                    # 已经是数字类型
+                    batch[k] = int(v)
             elif k == 'price':
-                batch[k] = float(v)
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v:
+                        try:
+                            # 移除货币符号和逗号
+                            v = v.replace('¥', '').replace('￥', '').replace('$', '').replace(',', '')
+                            batch[k] = float(v)
+                        except (ValueError, TypeError):
+                            batch[k] = 0.00
+                    else:
+                        batch[k] = 0.00
+                else:
+                    batch[k] = float(v)
             else:
-                batch[k] = v.strip()
-        except ValueError:
-            errors.append(f"批量{[i[1] for i in SYSTEM_FIELDS if i[0] == k][0]}必须为有效数字")
+                batch[k] = v.strip() if isinstance(v, str) else str(v)
+        except ValueError as ve:
+            errors.append(f"批量{[i[1] for i in SYSTEM_FIELDS if i[0] == k][0]}必须为有效数字: {str(ve)}")
+
     if errors:
         return data_list, errors
 
+
     # 映射原始数据为字典
     for idx, row in enumerate(raw_data, 1):
-        # 初始化默认值
+        # 初始化默认值 - 数量默认为0
         d = {
             'category': '未知', 'type': '', 'model': '未知型号', 'package': '未知封装',
-            'supplier': '未知供应商', 'quantity': 1, 'unit': '个',
+            'supplier': '未知供应商', 'quantity': 0, 'unit': '个',  # 数量默认为0
             'location': '未知位置', 'price': 0.00,
             'buy_time': datetime.now().strftime('%Y-%m-%d'),
             'channel': '未知', 'remark': '无'
         }
+
         # 按映射关系赋值
         for col, field in mapping.items():
             if not field or col not in columns:
@@ -665,42 +721,71 @@ def map_table_data(raw_data, columns, mapping, batch_vals):
             col_index = columns.index(col)
             if col_index >= len(row):
                 continue
-            val = str(row[col_index]).strip()
 
-            # 类型转换
+            # 获取单元格值
+            cell_value = row[col_index]
+
+            # 处理空值
+            if cell_value is None or (isinstance(cell_value, str) and not cell_value.strip()):
+                continue
+
+            # 根据字段类型处理
             if field == 'quantity':
-                if val:
-                    try:
-                        # 尝试转换为整数
-                        d[field] = int(float(val)) if '.' in val else int(val)
-                    except ValueError:
-                        d[field] = 1  # 转换失败使用默认值
-                else:
-                    d[field] = 1  # 空值使用默认值
-            elif field == 'price':
-                if val:
-                    try:
-                        # 尝试转换为浮点数
-                        d[field] = float(val)
-                    except ValueError:
-                        d[field] = 0.00  # 转换失败使用默认值
-                else:
-                    d[field] = 0.00  # 空值使用默认值
-            elif val:
-                d[field] = val
+                try:
+                    cell_str = str(cell_value).strip()
+                    if cell_str:
+                        # 移除可能的逗号（千位分隔符）
+                        cell_str = cell_str.replace(',', '')
+                        # 处理浮点数格式
+                        if '.' in cell_str:
+                            # 如果是浮点数，先转浮点再转整数
+                            d[field] = int(float(cell_str))
+                        else:
+                            d[field] = int(cell_str)
+                    else:
+                        d[field] = 0
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"第{idx}行数量转换失败: {cell_value}, 错误: {str(e)}")
+                    d[field] = 0  # 转换失败设为0
 
-        # 覆盖批量值
+            elif field == 'price':
+                try:
+                    cell_str = str(cell_value).strip()
+                    if cell_str:
+                        # 移除货币符号和逗号
+                        cell_str = cell_str.replace('¥', '').replace('￥', '').replace('$', '').replace(',', '')
+                        d[field] = float(cell_str)
+                    else:
+                        d[field] = 0.00
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"第{idx}行价格转换失败: {cell_value}, 错误: {str(e)}")
+                    d[field] = 0.00
+
+            else:
+                # 其他字段直接赋值
+                d[field] = str(cell_value).strip()
+
+        # 应用批量值（只覆盖空值或默认值）
         for k, v in batch.items():
-            if k not in mapping.values() or not str(
-                    row[columns.index(list(mapping.keys())[list(mapping.values()).index(k)])]).strip():
+            # 如果当前值为空或为默认值，且批量值不为空，则使用批量值
+            current_val = d.get(k)
+            is_default = (
+                    (k == 'quantity' and current_val == 0) or
+                    (k == 'price' and current_val == 0.00) or
+                    (k not in ['quantity', 'price'] and current_val in ['未知供应商', '未知位置', '未知', '无', ''])
+            )
+            if is_default and v is not None:
                 d[k] = v
+
+        # 调试日志
+        logger.debug(f"第{idx}行映射结果: {d}")
 
         data_list.append(d)
 
     # 表格内去重
     data_list = remove_table_dup(data_list)
+    logger.info(f"映射完成，共{len(data_list)}条数据")
     return data_list, errors
-
 
 # -------------------------- 解析请求参数（修复版） --------------------------
 def parse_args(req):
@@ -932,7 +1017,7 @@ MAIN_TEMPLATE = '''
     </div>
 
     <!-- 添加元器件弹窗（修改：新增类别字段） -->
-    <div class="modal fade" id="advSearchModal" tabindex="-1" onhidden.bs.modal="focusSearchInput()">
+    <div class="modal fade" id="addModal" tabindex="-1" onhidden.bs.modal="focusSearchInput()">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header bg-success text-white">
@@ -2113,6 +2198,7 @@ BOM_TEMPLATE = '''
             <div class="mt-3 p-3 bg-light rounded">
                 <p class="fw-bold mb-2">批量设置未映射字段（可选）</p>
                 <div class="d-flex flex-wrap gap-3">
+                    <div><label>数量：</label><input type="text" id="batch_quantity" class="form-control-sm" value="0" placeholder="批量设置数量"></div>
                     <div><label>供应商：</label><input type="text" id="batch_sup" class="form-control-sm" value="未知供应商"></div>
                     <div><label>单位：</label><input type="text" id="batch_unit" class="form-control-sm" value="个"></div>
                     <div><label>存放位置：</label><input type="text" id="batch_loc" class="form-control-sm" value="未知位置"></div>
@@ -2343,18 +2429,22 @@ BOM_TEMPLATE = '''
         function checkDuplicate() {
             // 获取批量值
             let batchVals = {
+                quantity: document.getElementById('batch_quantity').value.trim() || '0',
                 supplier: document.getElementById('batch_sup').value.trim() || '未知供应商',
                 unit: document.getElementById('batch_unit').value.trim() || '个',
                 location: document.getElementById('batch_loc').value.trim() || '未知位置',
                 channel: document.getElementById('batch_chan').value.trim() || '未知'
             };
+            
             // 显示加载中转
             showStep(0, true);
+            
             // 提交检测
             let formData = new FormData();
             formData.append('raw_data', JSON.stringify(parseRes.raw_data));
             formData.append('mapping', JSON.stringify(mapping));
             formData.append('batch_vals', JSON.stringify(batchVals));
+            
             fetch("{{url_for('check_bom_dup')}}", {method:'POST', body:formData})
             .then(res => res.json())
             .then(data => {
