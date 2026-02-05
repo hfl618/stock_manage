@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # -------------------------- 导入依赖（新增二维码和图片处理包） --------------------------
-import os
+
 import socket
 import sys
+import os
 import logging
 import zipfile
 import win32com.client
@@ -10,19 +11,19 @@ import pythoncom
 from datetime import datetime
 from io import BytesIO
 from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file, jsonify, \
-    send_from_directory
+    send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
 import uuid
 import json
 import qrcode
+import threading
+import time
+import subprocess
 
-import os
 os.environ['FLASK_ENV'] = 'development'
 os.environ['FLASK_DEBUG'] = '1'
-
-# -------------------------- 基础配置（稳定版，修复数据库路径核心问题） --------------------------
-# 工具判断
+# -------------------------- 全局工具/基础配置 --------------------------
 IS_WINDOWS = sys.platform.startswith('win')
 win32 = win32com.client if IS_WINDOWS else None
 
@@ -30,34 +31,41 @@ win32 = win32com.client if IS_WINDOWS else None
 QUANTITY_WARN_LOW = 10  # ≤10 红色预警
 QUANTITY_WARN_MID = 20  # 11-20 黄色预警
 
-# 日志配置（简单实用）
+# 日志配置
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Flask初始化
+# -------------------------- PyInstaller打包+源码 路径统一兼容（核心） --------------------------
+if hasattr(sys, '_MEIPASS'):
+    BASE_DIR = sys._MEIPASS  # 打包后用临时资源目录
+else:
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))  # 源码用程序根目录
+
+# -------------------------- 路径定义（适配现有static，无多余文件夹） --------------------------
+STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
+IMG_FOLDER = os.path.join(STATIC_FOLDER, 'img')
+ATTACH_FOLDER = os.path.join(STATIC_FOLDER, 'attach')
+QRCODE_FOLDER = os.path.join(STATIC_FOLDER, 'qrcode')
+BACKUP_FOLDER = os.path.join(BASE_DIR, 'backup')  # backup和static同级
+
+# -------------------------- Flask初始化+核心配置（无任何APP_DATA_DIR） --------------------------
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'component_stock_secure_2026'
-# 核心修复：指定数据库绝对路径到项目根目录，避免Flask默认放到instance目录
-BASE_DIR = os.path.dirname(__file__)
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(BASE_DIR, "instance/component.db")}'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10M文件上传限制
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10M上传限制
 app.config['JSON_AS_ASCII'] = False
-db = SQLAlchemy(app)
 
-# 目录定义（自动创建，新增二维码目录）
-STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
-IMG_FOLDER = os.path.join(STATIC_FOLDER, 'img')  # 图片目录
-ATTACH_FOLDER = os.path.join(STATIC_FOLDER, 'attach')  # 附件目录
-QRCODE_FOLDER = os.path.join(STATIC_FOLDER, 'qrcode')  # 二维码目录
-BACKUP_FOLDER = os.path.join(BASE_DIR, 'backup')  # 备份目录
 
-# 核心修改：数据库文件固定在Flask instance目录
+app.instance_path = os.path.join(BASE_DIR, 'instance')
+# 数据库文件在程序根目录，和static/backup同级
 DB_FILE = os.path.join(app.instance_path, 'component.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_FILE}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 允许的文件格式
-ALLOWED_IMG_EXT = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
-ALLOWED_ATTACH_EXT = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'rar', 'txt', 'csv'}
+# -------------------------- 仅创建必要目录（只有backup，static已有） --------------------------
+os.makedirs(BACKUP_FOLDER, exist_ok=True)
+
+# -------------------------- 数据库初始化 --------------------------
+db = SQLAlchemy(app)
 
 # 自动创建必要目录（新增二维码目录）
 for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, QRCODE_FOLDER, BACKUP_FOLDER]:
@@ -68,11 +76,16 @@ for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, QRCODE_FOLDER, BACKUP_F
 # 默认帮助文件（简洁版，无多余内容）
 HELP_FILE = os.path.join(BASE_DIR, 'help.txt')
 
+# 允许的文件格式
+ALLOWED_IMG_EXT = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
+ALLOWED_ATTACH_EXT = {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'zip', 'rar', 'txt', 'csv'}
 
-# -------------------------- 数据库模型（新增二维码路径字段） --------------------------
+
+# -------------------------- 数据库模型（新增二维码路径字段和类别字段） --------------------------
 class Component(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     category = db.Column(db.String(50), nullable=False, default='未知')  # 品类
+    type = db.Column(db.String(50), default='')  # 类别（新增）
     model = db.Column(db.String(200), nullable=False, default='未知型号')  # 型号规格
     package = db.Column(db.String(50), nullable=False, default='未知封装')  # 封装
     supplier = db.Column(db.String(100), default='未知供应商')  # 供应商
@@ -103,6 +116,7 @@ class Component(db.Model):
         qr_data = {
             'id': self.id,
             'category': self.category,
+            'type': self.type,
             'model': self.model,
             'package': self.package,
             'supplier': self.supplier,
@@ -117,7 +131,7 @@ class Component(db.Model):
         return json.dumps(qr_data, ensure_ascii=False)
 
 
-# -------------------------- 核心工具函数（新增二维码功能） --------------------------
+# -------------------------- 核心工具函数（修复跨磁盘路径问题） --------------------------
 # 数量预警样式
 def get_quantity_css(quantity):
     if quantity <= QUANTITY_WARN_LOW:
@@ -189,7 +203,28 @@ def allowed_file(filename, ext_set):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ext_set
 
 
-# 保存上传文件
+def safe_relative_path(file_path, base_dir):
+    """安全获取相对路径，处理跨磁盘情况"""
+    try:
+        # 尝试获取相对路径
+        rel_path = os.path.relpath(file_path, base_dir)
+        return rel_path.replace('\\', '/')
+    except ValueError:
+        # 如果跨磁盘（如C盘到G盘），使用相对于APP_DATA_DIR的路径
+        try:
+            # 尝试相对于APP_DATA_DIR
+            if file_path.startswith(BASE_DIR):
+                rel_path = os.path.relpath(file_path, BASE_DIR)
+                return rel_path.replace('\\', '/')
+            else:
+                # 如果文件不在APP_DATA_DIR下，返回绝对路径
+                return file_path.replace('\\', '/')
+        except:
+            # 最终返回文件名
+            return os.path.basename(file_path)
+
+
+# 保存上传文件（修复跨磁盘路径问题）
 def save_file(file, save_dir, ext_set, comp_pre):
     if not file or file.filename == '':
         return ''
@@ -201,17 +236,26 @@ def save_file(file, save_dir, ext_set, comp_pre):
     unique_name = f"{comp_pre}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}.{ext}"
     file_path = os.path.join(save_dir, unique_name)
     file.save(file_path)
-    # 返回相对路径
-    rel_path = os.path.relpath(file_path, BASE_DIR).replace('\\', '/')
+    # 使用安全方式获取相对路径
+    rel_path = safe_relative_path(file_path, BASE_DIR)
     logger.info(f"文件保存：{rel_path}")
     return rel_path
 
 
-# 删除文件
+# 删除文件（修复跨磁盘路径问题）
 def delete_file(file_path):
     if not file_path:
         return
-    abs_path = os.path.join(BASE_DIR, file_path)
+
+    # 构建绝对路径
+    if os.path.isabs(file_path):
+        abs_path = file_path
+    else:
+        # 先尝试相对于BASE_DIR，再尝试相对于APP_DATA_DIR
+        abs_path = os.path.join(BASE_DIR, file_path)
+        if not os.path.exists(abs_path):
+            abs_path = os.path.join(BASE_DIR, file_path)
+
     if os.path.exists(abs_path):
         try:
             os.remove(abs_path)
@@ -221,9 +265,9 @@ def delete_file(file_path):
             pass
 
 
-# 生成二维码
-def generate_qrcode(component):
-    """为元器件生成二维码"""
+# 生成二维码（工具函数，重命名为 create_qrcode 避免与路由函数冲突）
+def create_qrcode(component, auto_commit=True):
+    """为元器件生成二维码（内部工具函数）"""
     try:
         # 获取二维码数据
         qr_data = component.get_qr_data()
@@ -248,12 +292,13 @@ def generate_qrcode(component):
         # 保存图片
         img.save(filepath)
 
-        # 返回相对路径
-        rel_path = os.path.relpath(filepath, BASE_DIR).replace('\\', '/')
+        # 使用安全方式获取相对路径
+        rel_path = safe_relative_path(filepath, BASE_DIR)
 
         # 更新组件二维码路径
         component.qrcode_path = rel_path
-        db.session.commit()
+        if auto_commit:
+            db.session.commit()
 
         logger.info(f"二维码生成成功：{rel_path}")
         return rel_path
@@ -270,23 +315,64 @@ def get_or_generate_qrcode(component_id):
         return ""
 
     # 如果已有二维码文件且文件存在
-    if component.qrcode_path and os.path.exists(os.path.join(BASE_DIR, component.qrcode_path)):
-        return component.qrcode_path
+    if component.qrcode_path:
+        # 检查文件是否存在（尝试多种路径）
+        paths_to_check = [
+            component.qrcode_path if os.path.isabs(component.qrcode_path) else None,
+            os.path.join(BASE_DIR, component.qrcode_path),
+        ]
+
+        for path in paths_to_check:
+            if path and os.path.exists(path):
+                return component.qrcode_path
 
     # 生成新二维码
-    return generate_qrcode(component)
+    return create_qrcode(component)
 
 
 # 读取帮助文件
 def get_help_content():
     try:
-        with open(HELP_FILE, 'r', encoding='utf-8') as f:
-            return f.read()
-    except:
-        return "使用说明文件丢失，已自动重新创建！"
+        # 首先检查程序数据目录下的help.txt
+        help_path = os.path.join(BASE_DIR, 'help.txt')
+        if os.path.exists(help_path):
+            with open(help_path, 'r', encoding='utf-8') as f:
+                return f.read()
+
+        # 如果不存在，创建一个默认的帮助文件
+        default_help = """元器件库存管理工具 - 使用说明
+
+主要功能：
+1. 元器件管理：添加、编辑、删除元器件信息
+2. BOM导入：支持Excel和粘贴方式批量导入
+3. 二维码管理：生成、扫描元器件二维码
+4. 数据备份：自动备份数据库和文件
+5. 搜索筛选：多种方式快速查找元器件
+
+基本操作：
+• 添加元器件：点击"添加元器件"按钮
+• 批量导入：点击"BOM批量导入"按钮
+• 搜索：在搜索框输入关键字
+• 导出数据：选中元器件后点击"导出选中"
+• 备份恢复：在工具设置中进行
+
+注意事项：
+1. 定期备份重要数据
+2. 确保图片文件不超过10MB
+3. 二维码扫描需要摄像头权限
+4. 恢复操作会覆盖当前数据"""
+
+        # 创建帮助文件
+        with open(help_path, 'w', encoding='utf-8') as f:
+            f.write(default_help)
+
+        return default_help
+    except Exception as e:
+        logger.error(f"读取帮助文件失败：{str(e)}")
+        return "使用说明文件加载失败，请检查程序目录下的help.txt文件"
 
 
-# 清理残留文件（修改：包含二维码）
+# 修复清理残留文件函数中的跨磁盘路径问题
 def clean_residual_files():
     """清理无关联的图片、附件和二维码：数据库中不存在的文件直接删除"""
     try:
@@ -294,37 +380,59 @@ def clean_residual_files():
         valid_files = set()
         comps = Component.query.all()
         for c in comps:
-            if c.img_path: valid_files.add(c.img_path)
-            if c.attach_path: valid_files.add(c.attach_path)
-            if c.qrcode_path: valid_files.add(c.qrcode_path)
+            if c.img_path and c.img_path.strip():
+                valid_files.add(c.img_path)
+            if c.attach_path and c.attach_path.strip():
+                valid_files.add(c.attach_path)
+            if c.qrcode_path and c.qrcode_path.strip():
+                valid_files.add(c.qrcode_path)
         logger.info(f"数据库中有效文件数：{len(valid_files)}")
 
         # 扫描并清理图片目录
         img_del_count = 0
         for root, _, files in os.walk(IMG_FOLDER):
             for file in files:
-                file_path = os.path.relpath(os.path.join(root, file), BASE_DIR).replace('\\', '/')
-                if file_path not in valid_files:
-                    delete_file(file_path)
-                    img_del_count += 1
+                file_path = os.path.join(root, file)
+                try:
+                    # 使用安全方式获取相对路径
+                    rel_path = safe_relative_path(file_path, BASE_DIR)
+
+                    if rel_path not in valid_files:
+                        os.remove(file_path)
+                        img_del_count += 1
+                except Exception as e:
+                    logger.warning(f"文件删除失败：{file_path}，原因：{str(e)}")
+                    continue
 
         # 扫描并清理附件目录
         attach_del_count = 0
         for root, _, files in os.walk(ATTACH_FOLDER):
             for file in files:
-                file_path = os.path.relpath(os.path.join(root, file), BASE_DIR).replace('\\', '/')
-                if file_path not in valid_files:
-                    delete_file(file_path)
-                    attach_del_count += 1
+                file_path = os.path.join(root, file)
+                try:
+                    rel_path = safe_relative_path(file_path, BASE_DIR)
+
+                    if rel_path not in valid_files:
+                        os.remove(file_path)
+                        attach_del_count += 1
+                except Exception as e:
+                    logger.warning(f"文件删除失败：{file_path}，原因：{str(e)}")
+                    continue
 
         # 扫描并清理二维码目录
         qrcode_del_count = 0
         for root, _, files in os.walk(QRCODE_FOLDER):
             for file in files:
-                file_path = os.path.relpath(os.path.join(root, file), BASE_DIR).replace('\\', '/')
-                if file_path not in valid_files:
-                    delete_file(file_path)
-                    qrcode_del_count += 1
+                file_path = os.path.join(root, file)
+                try:
+                    rel_path = safe_relative_path(file_path, BASE_DIR)
+
+                    if rel_path not in valid_files:
+                        os.remove(file_path)
+                        qrcode_del_count += 1
+                except Exception as e:
+                    logger.warning(f"文件删除失败：{file_path}，原因：{str(e)}")
+                    continue
 
         total_del = img_del_count + attach_del_count + qrcode_del_count
         logger.info(
@@ -376,9 +484,9 @@ def delete_auto_start():
         return False, "关闭开机自启失败（请以管理员身份运行）"
 
 
-# -------------------------- 备份恢复核心函数（修改：包含二维码） --------------------------
+# -------------------------- 备份恢复核心函数（修改：包含二维码，修复跨磁盘问题） --------------------------
 def backup_all_data():
-    """修改：无下载弹窗，直接保存到backup默认目录，数据库指向instance，包含二维码"""
+    """无下载弹窗，直接保存到backup默认目录，数据库指向instance，包含二维码"""
     try:
         # 1. 检测数据库文件是否存在（instance目录）
         if not os.path.exists(DB_FILE):
@@ -399,21 +507,41 @@ def backup_all_data():
         with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             # 核心修改：打包instance目录下的数据库文件
             zf.write(DB_FILE, os.path.basename(DB_FILE))
+            logger.info(f"备份数据库文件：{DB_FILE}")
+
             # 备份图片
             for root, _, files in os.walk(IMG_FOLDER):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    zf.write(file_path, os.path.relpath(file_path, BASE_DIR))
+                    try:
+                        # 使用安全相对路径
+                        rel_path = safe_relative_path(file_path, BASE_DIR)
+                        zf.write(file_path, rel_path)
+                    except Exception as e:
+                        logger.warning(f"备份文件失败：{file_path}，原因：{str(e)}")
+                        continue
+
             # 备份附件
             for root, _, files in os.walk(ATTACH_FOLDER):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    zf.write(file_path, os.path.relpath(file_path, BASE_DIR))
+                    try:
+                        rel_path = safe_relative_path(file_path, BASE_DIR)
+                        zf.write(file_path, rel_path)
+                    except Exception as e:
+                        logger.warning(f"备份文件失败：{file_path}，原因：{str(e)}")
+                        continue
+
             # 备份二维码（新增）
             for root, _, files in os.walk(QRCODE_FOLDER):
                 for file in files:
                     file_path = os.path.join(root, file)
-                    zf.write(file_path, os.path.relpath(file_path, BASE_DIR))
+                    try:
+                        rel_path = safe_relative_path(file_path, BASE_DIR)
+                        zf.write(file_path, rel_path)
+                    except Exception as e:
+                        logger.warning(f"备份文件失败：{file_path}，原因：{str(e)}")
+                        continue
 
         logger.info(f"备份成功：{backup_path}，包含{comp_count}条元器件数据")
         flash(f"备份成功！共{comp_count}条数据，备份包已保存至【{BACKUP_FOLDER}】目录", "success")
@@ -440,6 +568,7 @@ def validate_backup_zip(zip_path):
 SYSTEM_FIELDS = [
     ('', '不映射（跳过）'),
     ('category', '品类【必填】'),
+    ('type', '类别'),
     ('model', '型号规格【必填】'),
     ('package', '封装【必填】'),
     ('supplier', '供应商'),
@@ -523,7 +652,7 @@ def map_table_data(raw_data, columns, mapping, batch_vals):
     for idx, row in enumerate(raw_data, 1):
         # 初始化默认值
         d = {
-            'category': '未知', 'model': '未知型号', 'package': '未知封装',
+            'category': '未知', 'type': '', 'model': '未知型号', 'package': '未知封装',
             'supplier': '未知供应商', 'quantity': 1, 'unit': '个',
             'location': '未知位置', 'price': 0.00,
             'buy_time': datetime.now().strftime('%Y-%m-%d'),
@@ -533,18 +662,39 @@ def map_table_data(raw_data, columns, mapping, batch_vals):
         for col, field in mapping.items():
             if not field or col not in columns:
                 continue
-            if columns.index(col) >= len(row):
+            col_index = columns.index(col)
+            if col_index >= len(row):
                 continue
-            val = str(row[columns.index(col)]).strip()
+            val = str(row[col_index]).strip()
+
             # 类型转换
             if field == 'quantity':
-                d[field] = int(val) if val.isdigit() else 1
+                if val:
+                    try:
+                        # 尝试转换为整数
+                        d[field] = int(float(val)) if '.' in val else int(val)
+                    except ValueError:
+                        d[field] = 1  # 转换失败使用默认值
+                else:
+                    d[field] = 1  # 空值使用默认值
             elif field == 'price':
-                d[field] = float(val) if val.replace('.', '').isdigit() else 0.00
+                if val:
+                    try:
+                        # 尝试转换为浮点数
+                        d[field] = float(val)
+                    except ValueError:
+                        d[field] = 0.00  # 转换失败使用默认值
+                else:
+                    d[field] = 0.00  # 空值使用默认值
             elif val:
                 d[field] = val
+
         # 覆盖批量值
-        d.update(batch)
+        for k, v in batch.items():
+            if k not in mapping.values() or not str(
+                    row[columns.index(list(mapping.keys())[list(mapping.values()).index(k)])]).strip():
+                d[k] = v
+
         data_list.append(d)
 
     # 表格内去重
@@ -552,8 +702,30 @@ def map_table_data(raw_data, columns, mapping, batch_vals):
     return data_list, errors
 
 
-# -------------------------- 前端模板（主页面修改：二维码列默认不显示，点击按钮才显示） --------------------------
-# 主页面模板（修改：二维码列默认不显示，点击按钮才显示）
+# -------------------------- 解析请求参数（修复版） --------------------------
+def parse_args(req):
+    """解析请求参数，确保所有字符串不为None"""
+    selected_str = req.args.get('selected', '')
+    selected = [s for s in selected_str.split(',') if s.strip().isdigit()]
+
+    # 确保所有字符串参数不为None
+    kw = req.args.get('kw', '') or ''
+    kw = kw.strip()
+
+    # 确保所有高级搜索参数不为None
+    adv_params = {}
+    for field in ['adv_cate', 'adv_type', 'adv_model', 'adv_pack', 'adv_sup',
+                  'adv_loc', 'adv_chan', 'adv_start', 'adv_end']:
+        value = req.args.get(field, '') or ''
+        value = value.strip()
+        if value:
+            adv_params[field] = value
+
+    return selected, kw, adv_params
+
+
+# -------------------------- 前端模板（主页面修改：新增类别列，可选择显示） --------------------------
+# 主页面模板（修改：新增类别列，可选择显示）
 MAIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -574,16 +746,23 @@ MAIN_TEMPLATE = '''
         .img-sm { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; }
         .qrcode-sm { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; }
         .qrcode-column { display: none; }  /* 默认不显示二维码列 */
+        .type-column { display: none; }  /* 默认不显示类别列 */
         .alert { 
             position: fixed; top: 80px; right: 20px; z-index: 9999; 
             min-width: 320px; max-width: 400px; margin: 0; padding: 0.8rem 1.2rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
         }
         .file-link { color: #0d6efd; text-decoration: none; }
         .file-link:hover { text-decoration: underline; }
         .modal-backdrop { z-index: 1040 !important; }
         .modal { z-index: 1050 !important; }
         .show-qrcode .qrcode-column { display: table-cell; }  /* 显示二维码列的样式 */
+        .show-type .type-column { display: table-cell; }  /* 显示类别列的样式 */
         /* 修复扫码弹窗样式 */
         #videoElement {
             transform: scaleX(1);
@@ -612,6 +791,18 @@ MAIN_TEMPLATE = '''
             0% { background-color: rgba(13, 110, 253, 0.1); }
             100% { background-color: transparent; }
         }
+        .column-toggle-group {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+            margin-left: 10px;
+        }
+        /* 优化弹窗性能 */
+        .modal.fade { animation-duration: 0.2s; }
+        .modal-backdrop.fade { animation-duration: 0.15s; }
+        /* 优化表格性能 */
+        .table { table-layout: fixed; }
+        .table td { word-wrap: break-word; }
     </style>
 </head>
 <body>
@@ -636,20 +827,29 @@ MAIN_TEMPLATE = '''
         {% endwith %}
 
         <div class="oper-bar">
-            <div>
-                <input type="checkbox" id="checkAll" onclick="toggleAll()">
-                <label for="checkAll" class="me-2">全选</label>
-                <span id="selectCount" class="text-muted">已选：0 条</span>
-                <button class="btn btn-primary btn-sm me-1" onclick="batchEdit()">批量编辑</button>
-                <button class="btn btn-danger btn-sm me-1" onclick="batchDel()">批量删除</button>
-                <button class="btn btn-success btn-sm me-1" data-bs-toggle="modal" data-bs-target="#addModal">添加元器件</button>
-                <button class="btn btn-info btn-sm me-1" onclick="openBOM()">BOM批量导入</button>
-                <button class="btn btn-warning btn-sm" id="exportBtn" disabled onclick="openExport()">导出选中</button>
-                <button class="btn btn-outline-info btn-sm" onclick="toggleQRColumn()" id="toggleQRBtn">显示二维码列</button>
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <div style="display: flex; align-items: center;">
+                    <input type="checkbox" id="checkAll" onclick="toggleAll()">
+                    <label for="checkAll" class="me-2">全选</label>
+                    <span id="selectCount" class="text-muted">已选：0 条</span>
+                </div>
+                <div>
+                    <button class="btn btn-primary btn-sm me-1" onclick="batchEdit()">批量编辑</button>
+                    <button class="btn btn-danger btn-sm me-1" onclick="batchDel()">批量删除</button>
+                    <button class="btn btn-success btn-sm me-1" data-bs-toggle="modal" data-bs-target="#addModal">添加元器件</button>
+                    <button class="btn btn-info btn-sm me-1" onclick="openBOM()">BOM批量导入</button>
+                    <button class="btn btn-warning btn-sm" id="exportBtn" disabled onclick="openExport()">导出选中</button>
+                </div>
+                <div class="column-toggle-group">
+                    <button class="btn btn-outline-info btn-sm" onclick="toggleColumn('qrcode')" id="toggleQRBtn">显示二维码</button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="toggleColumn('type')" id="toggleTypeBtn">显示类别</button>
+                </div>
             </div>
             <form method="GET" class="d-flex gap-1">
                 <input type="hidden" name="selected" id="selectedIds" value="{{selected|join(',')}}">
-                <input type="text" name="kw" class="form-control form-control-sm" placeholder="搜索：品类/型号/封装/供应商" value="{{kw}}">
+                <!-- 已修改：添加id、autofocus、autocomplete -->
+                <input type="text" id="searchInput" name="kw" class="form-control form-control-sm" placeholder="搜索：品类/类别/型号/封装/供应商" 
+                       value="{{kw}}" autofocus autocomplete="off">
                 <button type="submit" class="btn btn-primary btn-sm">搜索</button>
                 <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#advSearchModal">高级搜索</button>
                 {% if adv_params %}
@@ -665,6 +865,7 @@ MAIN_TEMPLATE = '''
                         <th width="5%">选择</th>
                         <th width="8%">图片</th>
                         <th>品类</th>
+                        <th class="type-column">类别</th>
                         <th>型号规格</th>
                         <th>封装</th>
                         <th>供应商</th>
@@ -682,12 +883,19 @@ MAIN_TEMPLATE = '''
                         <td><input type="checkbox" class="compCheck" value="{{comp.id}}" {% if comp.id|string in selected %}checked{% endif %}></td>
                         <td>
                             {% if comp.img_path %}
-                            <a href="/{{comp.img_path}}" target="_blank"><img src="/{{comp.img_path}}" class="img-sm"></a>
+                            <a href="/static/img/{{comp.img_path.split('/')[-1]}}" target="_blank"><img src="/static/img/{{comp.img_path.split('/')[-1]}}" class="img-sm" loading="lazy"></a>
                             {% else %}
                             <span class="text-muted">无</span>
                             {% endif %}
                         </td>
                         <td>{{comp.category}}</td>
+                        <td class="type-column">
+                            {% if comp.type %}
+                            <span class="badge bg-info">{{comp.type}}</span>
+                            {% else %}
+                            <span class="text-muted">无</span>
+                            {% endif %}
+                        </td>
                         <td>{{comp.model}}</td>
                         <td>{{comp.package}}</td>
                         <td>{{comp.supplier}}</td>
@@ -696,26 +904,26 @@ MAIN_TEMPLATE = '''
                         <td>{{comp.price|round(2)}}</td>
                         <td>
                             {% if comp.attach_path %}
-                            <a href="/{{comp.attach_path}}" target="_blank" class="file-link">{{comp.attach_path.split('/')[-1]|truncate(12)}}</a>
+                            <a href="/static/attach/{{comp.attach_path.split('/')[-1]}}" target="_blank" class="file-link">{{comp.attach_path.split('/')[-1]|truncate(12)}}</a>
                             {% else %}
                             <span class="text-muted">无</span>
                             {% endif %}
                         </td>
                         <td class="qrcode-column">
                             {% if comp.qrcode_path %}
-                            <a href="/{{comp.qrcode_path}}" target="_blank"><img src="/{{comp.qrcode_path}}" class="qrcode-sm" title="点击查看大图"></a>
+                            <a href="/static/qrcode/{{comp.qrcode_path.split('/')[-1]}}" target="_blank"><img src="/static/qrcode/{{comp.qrcode_path.split('/')[-1]}}" class="qrcode-sm" title="点击查看大图" loading="lazy"></a>
                             {% else %}
-                            <a href="{{url_for('generate_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-info btn-sm" title="生成二维码">生成</a>
+                             <a href="{{url_for('generate_qrcode', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-outline-info btn-sm" title="生成二维码">生成</a>
                             {% endif %}
                         </td>
                         <td>
-                            <a href="{{url_for('edit', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-warning btn-sm">编辑</a>
-                            <a href="{{url_for('delete', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-danger btn-sm" onclick="return confirm('确定删除？将同步删除图片/附件/二维码！')">删除</a>
+                            <a href="{{url_for('edit', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-warning btn-sm">编辑</a>
+                            <a href="{{url_for('delete', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-danger btn-sm" onclick="return confirm('确定删除？将同步删除图片/附件/二维码！')">删除</a>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="12" class="text-center text-muted py-3">暂无数据，点击「添加元器件」或「BOM批量导入」录入</td>
+                        <td colspan="14" class="text-center text-muted py-3">暂无数据，点击「添加元器件」或「BOM批量导入」录入</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -723,18 +931,19 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 添加元器件弹窗 -->
-    <div class="modal fade" id="addModal" tabindex="-1">
+    <!-- 添加元器件弹窗（修改：新增类别字段） -->
+    <div class="modal fade" id="advSearchModal" tabindex="-1" onhidden.bs.modal="focusSearchInput()">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header bg-success text-white">
                     <h5 class="modal-title">添加元器件</h5>
                     <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" action="{{url_for('add', selected=selected|join(','), kw=kw)}}" enctype="multipart/form-data">
+                <form method="POST" action="{{url_for('add', selected=selected|join(','), kw=kw or '')}}" enctype="multipart/form-data">
                     <div class="modal-body">
                         <div class="row g-3">
                             <div class="col-md-4"><label>品类<span class="text-danger">*</span></label><input type="text" name="category" class="form-control" required></div>
+                            <div class="col-md-4"><label>类别</label><input type="text" name="type" class="form-control" placeholder="如：电阻/电容/IC等"></div>
                             <div class="col-md-4"><label>型号规格<span class="text-danger">*</span></label><input type="text" name="model" class="form-control" required></div>
                             <div class="col-md-4"><label>封装<span class="text-danger">*</span></label><input type="text" name="package" class="form-control" required></div>
                             <div class="col-md-4"><label>供应商</label><input type="text" name="supplier" class="form-control" value="未知供应商"></div>
@@ -766,7 +975,7 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 批量编辑弹窗 -->
+    <!-- 批量编辑弹窗（修改：新增类别字段） -->
     <div class="modal fade" id="batchEditModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -774,10 +983,12 @@ MAIN_TEMPLATE = '''
                     <h5 class="modal-title">批量编辑</h5>
                     <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" action="{{url_for('batch_edit', kw=kw)}}">
+                <form method="POST" action="{{url_for('batch_edit', kw=kw or '')}}">
                     <div class="modal-body">
                         <p class="text-warning">仅修改填写的字段，未填写保留原值（暂不支持批量修改图片/附件）</p>
                         <div class="row g-3">
+                            <div class="col-md-4"><label>品类</label><input type="text" name="category" class="form-control"></div>
+                            <div class="col-md-4"><label>类别</label><input type="text" name="type" class="form-control"></div>
                             <div class="col-md-4"><label>供应商</label><input type="text" name="supplier" class="form-control"></div>
                             <div class="col-md-2"><label>数量</label><input type="number" name="quantity" class="form-control" min="0"></div>
                             <div class="col-md-2"><label>单位</label><input type="text" name="unit" class="form-control"></div>
@@ -785,7 +996,7 @@ MAIN_TEMPLATE = '''
                             <div class="col-md-2"><label>单价(¥)</label><input type="number" name="price" class="form-control" min="0" step="0.01"></div>
                             <div class="col-md-2"><label>采购时间</label><input type="date" name="buy_time" class="form-control"></div>
                             <div class="col-md-4"><label>采购渠道</label><input type="text" name="channel" class="form-control"></div>
-                            <div class="col-md-8"><label>备注</label><textarea name="remark" class="form-control" rows="2"></textarea></div>
+                            <div class="col-md-12"><label>备注</label><textarea name="remark" class="form-control" rows="2"></textarea></div>
                             <input type="hidden" name="ids" id="batchEditIds" value="{{selected|join(',')}}">
                         </div>
                     </div>
@@ -798,7 +1009,7 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 高级搜索弹窗 -->
+    <!-- 高级搜索弹窗（修改：新增类别搜索） -->
     <div class="modal fade" id="advSearchModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -811,8 +1022,9 @@ MAIN_TEMPLATE = '''
                         <input type="hidden" name="selected" value="{{selected|join(',')}}">
                         <div class="row g-3">
                             <div class="col-md-3"><label>品类</label><input type="text" name="adv_cate" class="form-control-sm" value="{{adv_params.adv_cate or ''}}"></div>
+                            <div class="col-md-3"><label>类别</label><input type="text" name="adv_type" class="form-control-sm" value="{{adv_params.adv_type or ''}}"></div>
                             <div class="col-md-3"><label>型号规格</label><input type="text" name="adv_model" class="form-control-sm" value="{{adv_params.adv_model or ''}}"></div>
-                            <div class="col-md-3"><label>封装</th><label><input type="text" name="adv_pack" class="form-control-sm" value="{{adv_params.adv_pack or ''}}"></div>
+                            <div class="col-md-3"><label>封装</label><input type="text" name="adv_pack" class="form-control-sm" value="{{adv_params.adv_pack or ''}}"></div>
                             <div class="col-md-3"><label>供应商</label><input type="text" name="adv_sup" class="form-control-sm" value="{{adv_params.adv_sup or ''}}"></div>
                             <div class="col-md-3"><label>存放位置</label><input type="text" name="adv_loc" class="form-control-sm" value="{{adv_params.adv_loc or ''}}"></div>
                             <div class="col-md-3"><label>采购渠道</label><input type="text" name="adv_chan" class="form-control-sm" value="{{adv_params.adv_chan or ''}}"></div>
@@ -823,15 +1035,14 @@ MAIN_TEMPLATE = '''
                     <div class="modal-footer">
                         <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                         <button type="reset" class="btn btn-light border">重置</button>
-                        <button type="submit" class="btn btn-primary">
-                        搜索</button>
+                        <button type="submit" class="btn btn-primary">搜索</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- 导出弹窗（修改：增加二维码和图片导出选项） -->
+    <!-- 导出弹窗（修改：增加二维码和类别导出选项） -->
     <div class="modal fade" id="exportModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -839,11 +1050,12 @@ MAIN_TEMPLATE = '''
                     <h5 class="modal-title">导出配置</h5>
                     <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" action="{{url_for('export', kw=kw)}}">
+                <form method="POST" action="{{url_for('export', kw=kw or '')}}">
                     <div class="modal-body">
                         <input type="hidden" name="ids" id="exportIds">
                         <div class="row g-2 mb-3">
                             <div class="col-md-2"><input type="checkbox" name="fields" value="category" checked> 品类</div>
+                            <div class="col-md-2"><input type="checkbox" name="fields" value="type"> 类别</div>
                             <div class="col-md-3"><input type="checkbox" name="fields" value="model" checked> 型号规格</div>
                             <div class="col-md-2"><input type="checkbox" name="fields" value="package" checked> 封装</div>
                             <div class="col-md-3"><input type="checkbox" name="fields" value="supplier" checked> 供应商</div>
@@ -911,8 +1123,8 @@ MAIN_TEMPLATE = '''
                 </div>
                 <div class="modal-body">
                     <div class="d-grid gap-2">
-                        <a href="{{url_for('backup', selected=selected|join(','), kw=kw)}}" class="btn btn-primary">📥 立即备份数据</a>
-                        <a href="{{url_for('restore_page', kw=kw)}}" class="btn btn-warning">🔄 备份恢复（覆盖当前数据）</a>
+                        <a href="{{url_for('backup', selected=selected|join(','), kw=kw or '')}}" class="btn btn-primary">📥 立即备份数据</a>
+                        <a href="{{url_for('restore_page', kw=kw or '')}}" class="btn btn-warning">🔄 备份恢复（覆盖当前数据）</a>
                         <a href="{{url_for('clean_residual')}}" class="btn btn-danger">🗑️ 清理残留文件（无关联图片/附件/二维码）</a>
                         <a href="{{url_for('auto_start', op='open')}}" class="btn btn-info">📌 开启开机自启（Windows）</a>
                         <a href="{{url_for('auto_start', op='close')}}" class="btn btn-dark">❌ 关闭开机自启（Windows）</a>
@@ -1095,7 +1307,15 @@ MAIN_TEMPLATE = '''
             document.querySelectorAll('.compCheck').forEach(c => {
                 c.addEventListener('change', updateSelect);
             });
-        }
+            // ===== 新增：搜索后聚焦输入框，光标定位到内容末尾 =====
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.focus(); // 聚焦输入框
+                // 光标移到输入内容末尾
+                const len = searchInput.value.length;
+                searchInput.setSelectionRange(len, len);
+            }
+        };
 
         // 获取选中ID
         function getSelected() {
@@ -1132,7 +1352,7 @@ MAIN_TEMPLATE = '''
             let ids = getSelected();
             if (ids.length === 0) {alert('请先选择元器件！'); return;}
             if (confirm(`确定删除选中的${ids.length}条数据？将同时删除关联的图片、附件和二维码！`)) {
-                window.location.href = "{{url_for('batch_delete', kw=kw)}}&ids=" + ids.join(',');
+                window.location.href = "{{url_for('batch_delete', kw=kw or '')}}&ids=" + ids.join(',');
             }
         }
 
@@ -1148,22 +1368,40 @@ MAIN_TEMPLATE = '''
             new bootstrap.Modal(document.getElementById('exportModal')).show();
         }
 
-        // 切换二维码列显示
-        function toggleQRColumn() {
+        function toggleColumn(type) {
             const table = document.getElementById('componentTable');
-            const button = document.getElementById('toggleQRBtn');
-
-            if (table.classList.contains('show-qrcode')) {
-                table.classList.remove('show-qrcode');
-                button.innerText = '显示二维码列';
+            const button = document.getElementById('toggle' + type.charAt(0).toUpperCase() + type.slice(1) + 'Btn');
+        
+            if (table.classList.contains('show-' + type)) {
+                table.classList.remove('show-' + type);
+                button.innerText = '显示' + getColumnName(type);
                 button.classList.remove('btn-info');
-                button.classList.add('btn-outline-info');
+                button.classList.add('btn-outline-secondary');
             } else {
-                table.classList.add('show-qrcode');
-                button.innerText = '隐藏二维码列';
-                button.classList.remove('btn-outline-info');
+                table.classList.add('show-' + type);
+                button.innerText = '隐藏' + getColumnName(type);
+                button.classList.remove('btn-outline-secondary');
                 button.classList.add('btn-info');
             }
+        }
+
+        // ===== 新增：通用聚焦搜索框函数（供高级搜索弹窗调用）=====
+        function focusSearchInput() {
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.focus();
+                const len = searchInput.value.length;
+                searchInput.setSelectionRange(len, len);
+            }
+        }
+
+        // 获取列显示名称
+        function getColumnName(type) {
+            const names = {
+                'qrcode': '二维码',
+                'type': '类别'
+            };
+            return names[type] || type;
         }
 
         // 批量生成二维码
@@ -1427,6 +1665,7 @@ MAIN_TEMPLATE = '''
                             <div class="col-6">
                                 <p class="mb-1"><strong>ID：</strong>${data.id || 'N/A'}</p>
                                 <p class="mb-1"><strong>品类：</strong>${data.category || 'N/A'}</p>
+                                <p class="mb-1"><strong>类别：</strong>${data.type || 'N/A'}</p>
                                 <p class="mb-1"><strong>型号：</strong>${data.model || 'N/A'}</p>
                                 <p class="mb-1"><strong>封装：</strong>${data.package || 'N/A'}</p>
                             </div>
@@ -1542,7 +1781,7 @@ MAIN_TEMPLATE = '''
         }
 
         // 打印数据
-        document.querySelector('form[action="{{url_for('export', kw=kw)}}"]').addEventListener('submit', async function(e) {
+        document.querySelector('form[action="{{url_for('export', kw=kw or '')}}"]').addEventListener('submit', async function(e) {
             let action = document.querySelector('input[name="action"]:checked').value;
             if (action === 'print') {
                 e.preventDefault();
@@ -1556,9 +1795,9 @@ MAIN_TEMPLATE = '''
                 if (data.code !== 1) {alert(data.error); return;}
                 // 渲染打印表格
                 let fieldMap = {
-                    category:'品类',model:'型号规格',package:'封装',supplier:'供应商',
-                    quantity:'数量',unit:'单位',location:'存放位置',price:'单价(¥)',
-                    buy_time:'采购时间',channel:'采购渠道',remark:'备注'
+                    category:'品类', type:'类别', model:'型号规格', package:'封装', supplier:'供应商',
+                    quantity:'数量', unit:'单位', location:'存放位置', price:'单价(¥)',
+                    buy_time:'采购时间', channel:'采购渠道', remark:'备注'
                 };
                 let table = document.getElementById('printTable');
                 table.innerHTML = '<thead class="table-dark"><tr></tr></thead><tbody></tbody>';
@@ -1591,7 +1830,7 @@ MAIN_TEMPLATE = '''
 </html>
 '''
 
-# 编辑页面模板（修改：包含二维码操作）
+# 编辑页面模板（修改：包含类别字段）
 EDIT_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1615,6 +1854,7 @@ EDIT_TEMPLATE = '''
         <form method="POST" enctype="multipart/form-data">
             <div class="row g-3">
                 <div class="col-md-4"><label>品类<span class="text-danger">*</span></label><input type="text" name="category" class="form-control" required value="{{comp.category}}"></div>
+                <div class="col-md-4"><label>类别</label><input type="text" name="type" class="form-control" value="{{comp.type or ''}}" placeholder="如：电阻/电容/IC等"></div>
                 <div class="col-md-4"><label>型号规格<span class="text-danger">*</span></label><input type="text" name="model" class="form-control" required value="{{comp.model}}"></div>
                 <div class="col-md-4"><label>封装<span class="text-danger">*</span></label><input type="text" name="package" class="form-control" required value="{{comp.package}}"></div>
                 <div class="col-md-4"><label>供应商</label><input type="text" name="supplier" class="form-control" value="{{comp.supplier}}"></div>
@@ -1631,7 +1871,7 @@ EDIT_TEMPLATE = '''
                     <input type="file" name="img" class="form-control" accept=".png,.jpg,.jpeg,.gif,.bmp,.webp">
                     {% if comp.img_path %}
                     <div class="mt-2">
-                        <a href="/{{comp.img_path}}" target="_blank"><img src="/{{comp.img_path}}" class="img-preview"></a>
+                        <a href="/static/img/{{comp.img_path.split('/')[-1]}}" target="_blank"><img src="/static/img/{{comp.img_path.split('/')[-1]}}" class="img-preview"></a>
                         <div class="form-check mt-2">
                             <input type="checkbox" name="clear_img" class="form-check-input" id="clear_img">
                             <label class="form-check-label" for="clear_img">清空当前图片</label>
@@ -1647,7 +1887,7 @@ EDIT_TEMPLATE = '''
                     <input type="file" name="attach" class="form-control" accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.csv">
                     {% if comp.attach_path %}
                     <div class="mt-2">
-                        <p>当前附件：<a href="/{{comp.attach_path}}" target="_blank" class="file-link">{{comp.attach_path.split('/')[-1]}}</a></p>
+                        <p>当前附件：<a href="/static/attach/{{comp.attach_path.split('/')[-1]}}" target="_blank" class="file-link">{{comp.attach_path.split('/')[-1]}}</a></p>
                         <div class="form-check mt-2">
                             <input type="checkbox" name="clear_attach" class="form-check-input" id="clear_attach">
                             <label class="form-check-label" for="clear_attach">清空当前附件</label>
@@ -1662,22 +1902,22 @@ EDIT_TEMPLATE = '''
                     <label>二维码管理</label>
                     {% if comp.qrcode_path %}
                     <div class="mt-2">
-                        <a href="/{{comp.qrcode_path}}" target="_blank"><img src="/{{comp.qrcode_path}}" class="qrcode-preview"></a>
+                        <a href="/static/qrcode/{{comp.qrcode_path.split('/')[-1]}}" target="_blank"><img src="/static/qrcode/{{comp.qrcode_path.split('/')[-1]}}" class="qrcode-preview"></a>
                         <div class="d-flex gap-2 mt-2">
-                            <a href="{{url_for('regenerate_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-info btn-sm">重新生成</a>
-                            <a href="{{url_for('delete_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-danger btn-sm" onclick="return confirm('确定删除二维码？')">删除</a>
+                            <a href="{{url_for('regenerate_qrcode', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-outline-info btn-sm">重新生成</a>
+                            <a href="{{url_for('delete_qrcode', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-outline-danger btn-sm" onclick="return confirm('确定删除二维码？')">删除</a>
                         </div>
                         <p class="text-muted small mt-1">扫描二维码查看元器件信息</p>
                     </div>
                     {% else %}
                     <p class="text-muted mt-2">暂无二维码</p>
-                    <a href="{{url_for('generate_qrcode', id=comp.id, selected=selected|join(','), kw=kw)}}" class="btn btn-outline-success btn-sm">生成二维码</a>
+                    <a href="{{url_for('generate_qrcode', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-outline-success btn-sm">生成二维码</a>
                     {% endif %}
                 </div>
             </div>
 
             <div class="mt-4">
-                <a href="{{url_for('index', selected=selected|join(','), kw=kw)}}" class="btn btn-secondary">返回</a>
+                <a href="{{url_for('index', selected=selected|join(','), kw=kw or '')}}" class="btn btn-secondary">返回</a>
                 <button type="submit" class="btn btn-primary ms-2">保存修改</button>
             </div>
         </form>
@@ -1687,7 +1927,7 @@ EDIT_TEMPLATE = '''
 </html>
 '''
 
-# BOM批量导入模板（修复：添加加载中转页面和步骤指示器）
+# BOM批量导入模板
 BOM_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1709,8 +1949,8 @@ BOM_TEMPLATE = '''
         .preview-container { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 0.5rem; border-radius: 4px; }
         .import-detail { background: #f8f9fa; padding: 1rem; border-radius: 6px; border-left: 4px solid #0d6efd; }
         .import-detail p { margin: 0.3rem 0; }
-        .alert { 
-            position: fixed; top: 80px; right: 20px; z-index: 9999; 
+        .alert {
+            position: fixed; top: 80px; right: 20px; z-index: 9999;
             min-width: 320px; max-width: 400px; margin: 0; padding: 0.8rem 1.2rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         }
@@ -1844,7 +2084,7 @@ BOM_TEMPLATE = '''
             <div class="alert alert-light mb-3" id="dataStats">
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
-                        📊 数据统计：共 <span class="badge bg-primary" id="rowCount">0</span> 条数据， 
+                        📊 数据统计：共 <span class="badge bg-primary" id="rowCount">0</span> 条数据，
                         <span class="badge bg-secondary" id="colCount">0</span> 列
                     </div>
                     <div class="text-muted small">显示前3行预览数据</div>
@@ -1899,151 +2139,32 @@ BOM_TEMPLATE = '''
             </div>
         </div>
 
-        <!-- 步骤4：导入完成（修改：显示完整导入详情） -->
+        <!-- 步骤4：导入完成 -->
         <div class="step hidden" id="step4">
             <h5 class="text-secondary">步骤4：导入完成</h5>
             {% if import_res %}
-            <div class="import-detail mb-4">
-                <h6>📋 导入结果详情：</h6>
-                <p><strong>总计处理：</strong>{{import_res.total}} 条数据</p>
-                <p><strong>新增数据：</strong><span class="text-success fw-bold">{{import_res.added}}</span> 条（全新元器件）</p>
-                <p><strong>合并数量：</strong><span class="text-warning fw-bold">{{import_res.merged}}</span> 条（与库内数据数量相加）</p>
-                <p><strong>覆盖更新：</strong><span class="text-info fw-bold">{{import_res.covered}}</span> 条（替换库内原有数据）</p>
-                <p><strong>跳过数据：</strong><span class="text-secondary fw-bold">{{import_res.skipped}}</span> 条（保留库内原有数据）</p>
-
-                <!-- 验证总数是否匹配 -->
-                <div class="mt-3 p-2 border rounded {% if import_res.added + import_res.merged + import_res.covered + import_res.skipped == import_res.total %}bg-success-subtle{% else %}bg-danger-subtle{% endif %}">
-                    <p class="mb-1"><strong>数据验证：</strong>
-                        新增({{import_res.added}}) + 合并({{import_res.merged}}) + 覆盖({{import_res.covered}}) + 跳过({{import_res.skipped}}) = 
-                        <span class="fw-bold">{{import_res.added + import_res.merged + import_res.covered + import_res.skipped}}</span>
-                        {% if import_res.added + import_res.merged + import_res.covered + import_res.skipped == import_res.total %}
-                        ✅ 与总计({{import_res.total}}) 匹配
-                        {% else %}
-                        ❌ 与总计({{import_res.total}}) 不匹配
-                        {% endif %}
-                    </p>
-                </div>
-
-                {% if import_res.new_items %}
-                <div class="mt-3">
-                    <h6>📦 新增元器件详情 ({{import_res.new_items|length}}个)：</h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>序号</th>
-                                    <th>品类</th>
-                                    <th>型号规格</th>
-                                    <th>封装</th>
-                                    <th>数量</th>
-                                    <th>位置</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for item in import_res.new_items %}
-                                <tr>
-                                    <td>{{loop.index}}</td>
-                                    <td>{{item.category}}</td>
-                                    <td>{{item.model}}</td>
-                                    <td>{{item.package}}</td>
-                                    <td>{{item.quantity}} {{item.unit}}</td>
-                                    <td>{{item.location}}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                {% endif %}
-
-                {% if import_res.updated_items %}
-                <div class="mt-3">
-                    <h6>🔄 更新元器件详情 ({{import_res.updated_items|length}}个)：</h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>序号</th>
-                                    <th>品类</th>
-                                    <th>型号规格</th>
-                                    <th>封装</th>
-                                    <th>更新类型</th>
-                                    <th>数量变化</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for item in import_res.updated_items %}
-                                <tr>
-                                    <td>{{loop.index}}</td>
-                                    <td>{{item.category}}</td>
-                                    <td>{{item.model}}</td>
-                                    <td>{{item.package}}</td>
-                                    <td>
-                                        {% if item.type %}
-                                        {{item.type}}
-                                        {% elif item.old_quantity is defined %}
-                                        合并数量
-                                        {% else %}
-                                        覆盖更新
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if item.old_quantity is defined and item.new_quantity is defined %}
-                                        {{item.old_quantity}} → {{item.new_quantity}}
-                                        {% else %}
-                                        -
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                {% endif %}
-
-                {% if import_res.skipped_items %}
-                <div class="mt-3">
-                    <h6>⏭️ 跳过的元器件 ({{import_res.skipped_items|length}}个)：</h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>序号</th>
-                                    <th>品类</th>
-                                    <th>型号规格</th>
-                                    <th>封装</th>
-                                    <th>原因</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for item in import_res.skipped_items %}
-                                <tr>
-                                    <td>{{loop.index}}</td>
-                                    <td>{{item.category}}</td>
-                                    <td>{{item.model}}</td>
-                                    <td>{{item.package}}</td>
-                                    <td>{{item.reason}}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                {% endif %}
-            </div>
-            {% endif %}
             <div class="alert alert-success">
-                🎉 导入成功！总处理<span id="total">{{import_res.total if import_res else 0}}</span>条，
-                新增<span id="add">{{import_res.added if import_res else 0}}</span>条，
-                合并<span id="merge">{{import_res.merged if import_res else 0}}</span>条，
-                覆盖<span id="cover">{{import_res.covered if import_res else 0}}</span>条，
-                跳过<span id="skip">{{import_res.skipped if import_res else 0}}</span>条
+                <h6>✅ 导入成功！</h6>
+                <p>总处理：<strong>{{import_res.total}}</strong> 条数据</p>
+                <p>新增：<strong class="text-success">{{import_res.added}}</strong> 条</p>
+                <p>合并：<strong class="text-warning">{{import_res.merged}}</strong> 条</p>
+                <p>覆盖：<strong class="text-info">{{import_res.covered}}</strong> 条</p>
+                <p>跳过：<strong class="text-secondary">{{import_res.skipped}}</strong> 条</p>
+                {% if import_res.qrcode_generated > 0 %}
+                <p>生成二维码：<strong>{{import_res.qrcode_generated}}</strong> 个</p>
+                {% endif %}
             </div>
-            <div class="mt-3">
+
+            <div class="mt-4">
                 <button class="btn btn-secondary" onclick="backToStep1()">重新导入</button>
                 <button class="btn btn-primary ms-2" onclick="closeWin()">关闭并返回主界面</button>
             </div>
+            {% else %}
+            <div class="alert alert-danger">
+                <p>❌ 导入失败，未获取到导入结果</p>
+                <button class="btn btn-secondary" onclick="backToStep1()">返回重试</button>
+            </div>
+            {% endif %}
         </div>
 
         <!-- 隐藏表单 -->
@@ -2159,30 +2280,30 @@ BOM_TEMPLATE = '''
                 mapping[col] = '';
                 let tr = document.createElement('tr');
                 // 表格列
-                let td1 = document.createElement('td'); 
-                td1.innerText = col; 
+                let td1 = document.createElement('td');
+                td1.innerText = col;
                 tr.appendChild(td1);
                 // 下拉框
                 let td2 = document.createElement('td');
-                let select = document.createElement('select'); 
+                let select = document.createElement('select');
                 select.className = 'form-select form-select-sm';
                 fields.forEach(f => {
                     let opt = document.createElement('option');
-                    opt.value = f[0]; 
+                    opt.value = f[0];
                     opt.innerText = f[1];
                     if (['category','model','package'].includes(f[0])) {
-                        opt.style.color = 'red'; 
+                        opt.style.color = 'red';
                         opt.style.fontWeight = 'bold';
                     }
                     select.appendChild(opt);
                 });
                 select.onchange = function() {mapping[col] = this.value;};
-                td2.appendChild(select); 
+                td2.appendChild(select);
                 tr.appendChild(td2);
                 // 预览
                 let td3 = document.createElement('td');
                 let val = parseRes.preview.length > 0 ? parseRes.preview[0][parseRes.columns.indexOf(col)] : '';
-                td3.innerText = val || '无'; 
+                td3.innerText = val || '无';
                 tr.appendChild(td3);
                 tbody.appendChild(tr);
             });
@@ -2249,26 +2370,32 @@ BOM_TEMPLATE = '''
         }
 
         // 渲染重复数据【四选项：跳过/合并/依旧导入/新增一条】
+        // 在 renderDup 函数中添加调试信息
         function renderDup() {
             let total = dupData.length + newData.length;
             document.getElementById('totalCount').innerText = total;
             document.getElementById('dupCount').innerText = dupData.length;
             document.getElementById('newCount').innerText = newData.length;
 
+            console.log("重复数据详情:", dupData); // 添加调试日志
+            console.log("新增数据详情:", newData); // 添加调试日志
+
             let dupList = document.getElementById('dupList');
             let noDup = document.getElementById('noDup');
 
             if (dupData.length === 0) {
-                dupList.classList.add('hidden'); 
-                noDup.classList.remove('hidden'); 
+                dupList.classList.add('hidden');
+                noDup.classList.remove('hidden');
                 return;
             }
 
-            dupList.classList.remove('hidden'); 
+            dupList.classList.remove('hidden');
             noDup.classList.add('hidden');
             dupList.innerHTML = '<h6>重复数据处理选项：</h6><p class="text-muted small">共检测到' + dupData.length + '条重复数据，请为每条数据选择处理方式：</p>';
 
             dupData.forEach((item, idx) => {
+                console.log(`重复数据 #${idx+1}:`, item); // 添加调试日志
+
                 let div = document.createElement('div');
                 div.className = 'duplicate-item';
                 div.innerHTML = `
@@ -2299,19 +2426,8 @@ BOM_TEMPLATE = '''
         function doImport() {
             // 获取重复数据的处理方式
             let dupOper = {};
-            let newItems = [];
             document.querySelectorAll('.dupOper').forEach(sel => {
-                if (sel.value === 'new') {
-                    // 对于"新增一条"选项，将数据添加到newData中
-                    const oldId = sel.dataset.id;
-                    const dupItem = dupData.find(item => item.old_data.id == oldId);
-                    if (dupItem) {
-                        newData.push(dupItem.data);
-                    }
-                    dupOper[oldId] = 'skip'; // 原来的跳过
-                } else {
-                    dupOper[sel.dataset.id] = sel.value;
-                }
+                dupOper[sel.dataset.id] = sel.value;
             });
 
             // 获取批量值
@@ -2329,33 +2445,28 @@ BOM_TEMPLATE = '''
             document.getElementById('dupOper').value = JSON.stringify(dupOper);
             document.getElementById('uniqueData').value = JSON.stringify(newData);
 
-            // 显示加载中转
+            // 显示加载中转页面
             showStep(0, true);
 
-            // 延迟提交表单，确保加载界面显示
-            setTimeout(() => {
-                document.getElementById('importForm').submit();
-            }, 1000);
+            // 立即提交表单
+            document.getElementById('importForm').submit();
         }
 
         // 页面加载时初始化
         window.onload = function() {
             initAutoClose();
-            {% if import_res %}
-                // 导入完成时直接显示步骤4，不经过中转
-                document.querySelectorAll('.step').forEach(el => el.classList.add('hidden'));
-                // 更新步骤指示器
-                document.querySelectorAll('.step-item').forEach(item => {
-                    item.classList.remove('active');
-                });
-                const stepItem = document.querySelector('.step-item[data-step="4"]');
-                if (stepItem) {
-                    stepItem.classList.add('active');
-                }
-                document.getElementById('step4').classList.remove('hidden');
-                initAutoClose();
-            {% endif %}
-        }
+            updateSelect();
+            document.querySelectorAll('.compCheck').forEach(c => {
+                c.addEventListener('change', updateSelect);
+            });
+            // ===== 新增：搜索后聚焦输入框，光标定位到内容末尾 =====
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.focus();
+                const len = searchInput.value.length;
+                searchInput.setSelectionRange(len, len);
+            }
+        };
     </script>
 </body>
 </html>
@@ -2405,63 +2516,62 @@ app.add_template_global(get_quantity_css, 'get_quantity_css')
 app.add_template_global(SYSTEM_FIELDS, 'SYSTEM_FIELDS')
 
 
-# 解析请求参数
-def parse_args(req):
-    selected = [s for s in req.args.get('selected', '').split(',') if s.strip().isdigit()]
-    kw = req.args.get('kw', '').strip()
-    adv_params = {
-        'adv_cate': req.args.get('adv_cate', '').strip(),
-        'adv_model': req.args.get('adv_model', '').strip(),
-        'adv_pack': req.args.get('adv_pack', '').strip(),
-        'adv_sup': req.args.get('adv_sup', '').strip(),
-        'adv_loc': req.args.get('adv_loc', '').strip(),
-        'adv_chan': req.args.get('adv_chan', '').strip(),
-        'adv_start': req.args.get('adv_start', '').strip(),
-        'adv_end': req.args.get('adv_end', '').strip()
-    }
-    adv_params = {k: v for k, v in adv_params.items() if v}
-    return selected, kw, adv_params
-
-
-# 首页
+# 首页（修改：新增类别搜索功能）
 @app.route('/')
 def index():
-    selected, kw, adv_params = parse_args(request)
-    query = Component.query
-    if kw:
-        query = query.filter(db.or_(
-            Component.category.like(f'%{kw}%'),
-            Component.model.like(f'%{kw}%'),
-            Component.package.like(f'%{kw}%'),
-            Component.supplier.like(f'%{kw}%'),
-            Component.location.like(f'%{kw}%')
-        ))
-    if adv_params:
-        if 'adv_cate' in adv_params: query = query.filter(Component.category.like(f'%{adv_params["adv_cate"]}%'))
-        if 'adv_model' in adv_params: query = query.filter(Component.model.like(f'%{adv_params["adv_model"]}%'))
-        if 'adv_pack' in adv_params: query = query.filter(Component.package.like(f'%{adv_params["adv_pack"]}%'))
-        if 'adv_sup' in adv_params: query = query.filter(Component.supplier.like(f'%{adv_params["adv_sup"]}%'))
-        if 'adv_loc' in adv_params: query = query.filter(Component.location.like(f'%{adv_params["adv_loc"]}%'))
-        if 'adv_chan' in adv_params: query = query.filter(Component.channel.like(f'%{adv_params["adv_chan"]}%'))
-        if 'adv_start' in adv_params and 'adv_end' in adv_params:
-            query = query.filter(Component.buy_time.between(adv_params["adv_start"], adv_params["adv_end"]))
-        elif 'adv_start' in adv_params:
-            query = query.filter(Component.buy_time >= adv_params["adv_start"])
-        elif 'adv_end' in adv_params:
-            query = query.filter(Component.buy_time <= adv_params["adv_end"])
-    components = query.order_by(Component.id.desc()).all()
-    return render_template_string(MAIN_TEMPLATE,
-                                  components=components, selected=selected, kw=kw, adv_params=adv_params,
-                                  today=datetime.now().strftime('%Y-%m-%d'), help_content=get_help_content()
-                                  )
+    try:
+        selected, kw, adv_params = parse_args(request)
+        query = Component.query
+        if kw:
+            query = query.filter(db.or_(
+                Component.category.like(f'%{kw}%'),
+                Component.type.like(f'%{kw}%'),
+                Component.model.like(f'%{kw}%'),
+                Component.package.like(f'%{kw}%'),
+                Component.supplier.like(f'%{kw}%'),
+                Component.location.like(f'%{kw}%')
+            ))
+        if adv_params:
+            if 'adv_cate' in adv_params: query = query.filter(Component.category.like(f'%{adv_params["adv_cate"]}%'))
+            if 'adv_type' in adv_params: query = query.filter(Component.type.like(f'%{adv_params["adv_type"]}%'))
+            if 'adv_model' in adv_params: query = query.filter(Component.model.like(f'%{adv_params["adv_model"]}%'))
+            if 'adv_pack' in adv_params: query = query.filter(Component.package.like(f'%{adv_params["adv_pack"]}%'))
+            if 'adv_sup' in adv_params: query = query.filter(Component.supplier.like(f'%{adv_params["adv_sup"]}%'))
+            if 'adv_loc' in adv_params: query = query.filter(Component.location.like(f'%{adv_params["adv_loc"]}%'))
+            if 'adv_chan' in adv_params: query = query.filter(Component.channel.like(f'%{adv_params["adv_chan"]}%'))
+            if 'adv_start' in adv_params and 'adv_end' in adv_params:
+                query = query.filter(Component.buy_time.between(adv_params["adv_start"], adv_params["adv_end"]))
+            elif 'adv_start' in adv_params:
+                query = query.filter(Component.buy_time >= adv_params["adv_start"])
+            elif 'adv_end' in adv_params:
+                query = query.filter(Component.buy_time <= adv_params["adv_end"])
+
+        components = query.order_by(Component.id.desc()).all()
+
+        # 确保selected是字符串列表
+        selected_str_list = [str(s) for s in selected]
+
+        return render_template_string(MAIN_TEMPLATE,
+                                      components=components,
+                                      selected=selected_str_list,
+                                      kw=kw,
+                                      adv_params=adv_params,
+                                      today=datetime.now().strftime('%Y-%m-%d'),
+                                      help_content=get_help_content()
+                                      )
+    except Exception as e:
+        logger.error(f"Index route error: {str(e)}", exc_info=True)
+        # 返回一个简单的错误信息，而不是崩溃
+        return f"<h3>页面加载错误</h3><p>{str(e)}</p><p><a href='/'>返回首页</a></p>", 500
 
 
-# 添加元器件（修改：自动生成二维码）
+# 添加元器件（修改：新增类别字段）
 @app.route('/add', methods=['POST'])
 def add():
     selected, kw, _ = parse_args(request)
     form = {
         'category': request.form.get('category', '').strip(),
+        'type': request.form.get('type', '').strip(),
         'model': request.form.get('model', '').strip(),
         'package': request.form.get('package', '').strip(),
         'supplier': request.form.get('supplier', '未知供应商').strip(),
@@ -2487,13 +2597,13 @@ def add():
     comp.img_path = save_file(request.files.get('img'), IMG_FOLDER, ALLOWED_IMG_EXT, pre)
     comp.attach_path = save_file(request.files.get('attach'), ATTACH_FOLDER, ALLOWED_ATTACH_EXT, pre)
     # 自动生成二维码
-    generate_qrcode(comp)
+    create_qrcode(comp)  # 改为调用 create_qrcode
     db.session.commit()
     flash(f"元器件「{form['category']}-{form['model']}」添加成功！已自动生成二维码。", "success")
     return redirect(url_for('index', selected=','.join(selected), kw=kw))
 
 
-# 编辑元器件
+# 编辑元器件（修改：新增类别字段，修复跨磁盘路径问题）
 @app.route('/edit/<int:id>', methods=['GET', 'POST'])
 def edit(id):
     selected, kw, _ = parse_args(request)
@@ -2502,6 +2612,7 @@ def edit(id):
         return render_template_string(EDIT_TEMPLATE, comp=comp, selected=selected, kw=kw)
     form = {
         'category': request.form.get('category', '').strip(),
+        'type': request.form.get('type', '').strip(),
         'model': request.form.get('model', '').strip(),
         'package': request.form.get('package', '').strip(),
         'supplier': request.form.get('supplier', '未知供应商').strip(),
@@ -2539,7 +2650,7 @@ def edit(id):
         setattr(comp, k, v)
     # 如果数据有修改，重新生成二维码
     if any(getattr(comp, k) != v for k, v in form.items() if k != 'id'):
-        generate_qrcode(comp)
+        create_qrcode(comp)  # 改为调用 create_qrcode
     db.session.commit()
     flash(f"元器件「{comp.category}-{comp.model}」修改成功！二维码已更新。", "success")
     return redirect(url_for('index', selected=','.join(selected), kw=kw))
@@ -2579,7 +2690,7 @@ def batch_delete():
     return redirect(url_for('index', selected='', kw=kw))
 
 
-# 批量编辑
+# 批量编辑（修改：新增类别字段）
 @app.route('/batch_edit', methods=['POST'])
 def batch_edit():
     kw = request.args.get('kw', '').strip()
@@ -2588,6 +2699,8 @@ def batch_edit():
         flash("请选择要编辑的元器件！", "danger")
         return redirect(url_for('index', kw=kw))
     form = {}
+    if request.form.get('category', '').strip(): form['category'] = request.form.get('category').strip()
+    if request.form.get('type', '').strip(): form['type'] = request.form.get('type').strip()
     if request.form.get('supplier', '').strip(): form['supplier'] = request.form.get('supplier').strip()
     if request.form.get('quantity', '').strip():
         try:
@@ -2614,14 +2727,81 @@ def batch_edit():
     # 批量更新后重新生成二维码
     comps = Component.query.filter(Component.id.in_(ids)).all()
     for comp in comps:
-        generate_qrcode(comp)
+        create_qrcode(comp, auto_commit=False)  # 改为调用 create_qrcode，不自动提交
 
     db.session.commit()
     flash(f"批量编辑成功！共修改 {len(ids)} 条数据，二维码已更新", "success")
     return redirect(url_for('index', selected=','.join([str(i) for i in ids]), kw=kw))
 
 
-# 导出/打印（修改：支持导出二维码和图片）
+# 二维码生成路由（使用 generate_qrcode 名称以匹配模板中的调用）
+@app.route('/generate_qrcode/<int:id>')
+def generate_qrcode(id):  # 路由函数名为 generate_qrcode
+    selected, kw, _ = parse_args(request)
+    comp = Component.query.get_or_404(id)
+    qrcode_path = create_qrcode(comp)  # 调用工具函数 create_qrcode
+    if qrcode_path:
+        flash("二维码生成成功！", "success")
+    else:
+        flash("二维码生成失败", "warning")
+    return redirect(url_for('index', selected=','.join(selected), kw=kw))
+
+
+# 重新生成二维码路由
+@app.route('/regenerate_qrcode/<int:id>')
+def regenerate_qrcode(id):
+    selected, kw, _ = parse_args(request)
+    comp = Component.query.get_or_404(id)
+    # 删除旧二维码
+    if comp.qrcode_path:
+        delete_file(comp.qrcode_path)
+    # 生成新二维码
+    qrcode_path = create_qrcode(comp)  # 改为调用 create_qrcode
+    if qrcode_path:
+        flash(f"二维码重新生成成功！", "success")
+    else:
+        flash("二维码重新生成失败", "warning")
+    return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
+
+
+# 删除二维码路由
+@app.route('/delete_qrcode/<int:id>')
+def delete_qrcode(id):
+    selected, kw, _ = parse_args(request)
+    comp = Component.query.get_or_404(id)
+    if comp.qrcode_path:
+        delete_file(comp.qrcode_path)
+        comp.qrcode_path = ''
+        db.session.commit()
+        flash("二维码删除成功", "success")
+    else:
+        flash("没有二维码可删除", "warning")
+    return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
+
+
+# 批量生成二维码路由
+@app.route('/batch_generate_qrcodes')
+def batch_generate_qrcodes():
+    selected, kw, _ = parse_args(request)
+    ids = [int(i) for i in request.args.get('ids', '').split(',') if i.strip().isdigit()]
+
+    if not ids:
+        # 为所有元器件生成二维码
+        comps = Component.query.all()
+    else:
+        comps = Component.query.filter(Component.id.in_(ids)).all()
+
+    success_count = 0
+    for comp in comps:
+        if not comp.qrcode_path or not os.path.exists(os.path.join(BASE_DIR, comp.qrcode_path)):
+            if create_qrcode(comp):  # 改为调用 create_qrcode
+                success_count += 1
+
+    flash(f"批量生成二维码完成！共为 {success_count}/{len(comps)} 个元器件生成二维码", "success")
+    return redirect(url_for('index', selected=','.join(selected), kw=kw))
+
+
+# 导出/打印（修改：新增类别字段导出）
 @app.route('/export', methods=['POST'])
 def export():
     kw = request.args.get('kw', '').strip()
@@ -2645,7 +2825,7 @@ def export():
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 # 1. 导出Excel数据
                 field_cn = {
-                    'category': '品类', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
+                    'category': '品类', 'type': '类别', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
                     'quantity': '数量', 'unit': '单位', 'location': '存放位置', 'price': '采购单价(¥)',
                     'buy_time': '采购时间', 'channel': '采购渠道', 'remark': '备注'
                 }
@@ -2706,7 +2886,7 @@ def export():
 
     # 普通Excel/CSV导出
     field_cn = {
-        'category': '品类', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
+        'category': '品类', 'type': '类别', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
         'quantity': '数量', 'unit': '单位', 'location': '存放位置', 'price': '采购单价(¥)',
         'buy_time': '采购时间', 'channel': '采购渠道', 'remark': '备注'
     }
@@ -2734,7 +2914,7 @@ def export():
     return send_file(output, mimetype=mimetype, as_attachment=True, download_name=filename)
 
 
-# 获取打印数据
+# 获取打印数据（修改：新增类别字段）
 @app.route('/get_print_data')
 def get_print_data():
     ids = [int(i) for i in request.args.get('ids', '').split(',') if i.strip().isdigit()]
@@ -2873,6 +3053,7 @@ def parse_bom_data():
         return jsonify({'code': 0, 'error': f"解析异常：{str(e)}"})
 
 
+# BOM重复检测接口
 @app.route('/check_bom_dup', methods=['POST'])
 def check_bom_dup():
     """
@@ -2915,6 +3096,7 @@ def check_bom_dup():
                 old_data = {
                     'id': old_component.id,
                     'category': old_component.category,
+                    'type': old_component.type,
                     'model': old_component.model,
                     'package': old_component.package,
                     'supplier': old_component.supplier,
@@ -2970,18 +3152,12 @@ def do_bom_import():
         except json.JSONDecodeError as e:
             logger.error(f"BOM导入：JSON解析失败 {str(e)}")
             flash("数据格式错误，导入失败", "danger")
-            return render_template_string(BOM_TEMPLATE,
-                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
-                                                      'skipped': 0, 'new_items': [], 'updated_items': [],
-                                                      'skipped_items': []})
+            return render_template_string(BOM_TEMPLATE, import_res=None)
 
         # 基础类型校验
         if not isinstance(raw_data, list) or not isinstance(dup_oper, dict) or not isinstance(unique_data, list):
             flash("数据格式错误，导入失败", "danger")
-            return render_template_string(BOM_TEMPLATE,
-                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
-                                                      'skipped': 0, 'new_items': [], 'updated_items': [],
-                                                      'skipped_items': []})
+            return render_template_string(BOM_TEMPLATE, import_res=None)
 
         # 获取列名（从mapping的键中提取）
         columns = list(mapping.keys())
@@ -2991,10 +3167,7 @@ def do_bom_import():
         if errors:
             logger.error(f"BOM导入映射失败：{';'.join(errors)}")
             flash(f"导入失败：{';'.join(errors)}", "danger")
-            return render_template_string(BOM_TEMPLATE,
-                                          import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
-                                                      'skipped': 0, 'new_items': [], 'updated_items': [],
-                                                      'skipped_items': []})
+            return render_template_string(BOM_TEMPLATE, import_res=None)
 
         # 初始化统计和详情
         total = len(data_list)
@@ -3026,6 +3199,8 @@ def do_bom_import():
                 old_quantity = old_comp.quantity
                 # 数量相加，其余字段保留原有
                 old_comp.quantity += new_data.get('quantity', 0)
+                # 重新生成二维码
+                create_qrcode(old_comp, auto_commit=False)
                 merged += 1
                 updated_items.append({
                     'category': old_comp.category,
@@ -3040,6 +3215,8 @@ def do_bom_import():
                 for k, v in new_data.items():
                     if hasattr(old_comp, k) and k != 'id':
                         setattr(old_comp, k, v)
+                # 重新生成二维码
+                create_qrcode(old_comp, auto_commit=False)
                 covered += 1
                 updated_items.append({
                     'category': old_comp.category,
@@ -3057,6 +3234,7 @@ def do_bom_import():
                 added += 1
                 new_items.append({
                     'category': new_comp.category,
+                    'type': new_comp.type,
                     'model': new_comp.model,
                     'package': new_comp.package,
                     'quantity': new_comp.quantity,
@@ -3080,6 +3258,7 @@ def do_bom_import():
                 added += 1
                 new_items.append({
                     'category': new_comp.category,
+                    'type': new_comp.type,
                     'model': new_comp.model,
                     'package': new_comp.package,
                     'quantity': new_comp.quantity,
@@ -3093,11 +3272,14 @@ def do_bom_import():
         db.session.commit()
 
         # 为新添加的元器件生成二维码
-        new_comps = Component.query.filter(Component.qrcode_path == '').all()
         qrcode_generated = 0
-        for comp in new_comps:
-            if generate_qrcode(comp):
-                qrcode_generated += 1
+        # 获取所有新增的元器件（包括"新增一条"创建的）
+        if added > 0:
+            # 获取最新添加的元器件（通过ID倒序）
+            new_comps = Component.query.order_by(Component.id.desc()).limit(added).all()
+            for comp in new_comps:
+                if create_qrcode(comp):  # 改为调用 create_qrcode
+                    qrcode_generated += 1
 
         # 导入结果统计
         import_res = {
@@ -3106,9 +3288,9 @@ def do_bom_import():
             'merged': merged,
             'covered': covered,
             'skipped': skipped,
-            'new_items': new_items,  # 显示所有新增
-            'updated_items': updated_items,  # 显示所有更新
-            'skipped_items': skipped_items,  # 显示所有跳过
+            'new_items': new_items,
+            'updated_items': updated_items,
+            'skipped_items': skipped_items,
             'qrcode_generated': qrcode_generated
         }
 
@@ -3123,6 +3305,7 @@ def do_bom_import():
             f"导入成功！共处理{total}条数据，新增{added}条，合并{merged}条，覆盖{covered}条，跳过{skipped}条，生成{qrcode_generated}个二维码",
             "success")
 
+        # 关键修复：直接返回渲染好的模板，而不是重定向
         return render_template_string(BOM_TEMPLATE, import_res=import_res)
 
     except Exception as e:
@@ -3130,74 +3313,7 @@ def do_bom_import():
         db.session.rollback()
         logger.error(f"BOM导入执行失败：{str(e)}", exc_info=True)
         flash(f"导入失败：{str(e)}", "danger")
-        return render_template_string(BOM_TEMPLATE,
-                                      import_res={'total': 0, 'added': 0, 'merged': 0, 'covered': 0,
-                                                  'skipped': 0, 'new_items': [], 'updated_items': [],
-                                                  'skipped_items': []})
-
-
-# 二维码相关路由
-@app.route('/generate_qrcode/<int:id>')
-def generate_qrcode_route(id):
-    selected, kw, _ = parse_args(request)
-    comp = Component.query.get_or_404(id)
-    qrcode_path = generate_qrcode(comp)
-    if qrcode_path:
-        flash(f"二维码生成成功！", "success")
-    else:
-        flash("二维码生成失败", "warning")
-    return redirect(url_for('index', selected=','.join(selected), kw=kw))
-
-
-@app.route('/regenerate_qrcode/<int:id>')
-def regenerate_qrcode(id):
-    selected, kw, _ = parse_args(request)
-    comp = Component.query.get_or_404(id)
-    # 删除旧二维码
-    if comp.qrcode_path:
-        delete_file(comp.qrcode_path)
-    # 生成新二维码
-    qrcode_path = generate_qrcode(comp)
-    if qrcode_path:
-        flash(f"二维码重新生成成功！", "success")
-    else:
-        flash("二维码重新生成失败", "warning")
-    return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
-
-
-@app.route('/delete_qrcode/<int:id>')
-def delete_qrcode(id):
-    selected, kw, _ = parse_args(request)
-    comp = Component.query.get_or_404(id)
-    if comp.qrcode_path:
-        delete_file(comp.qrcode_path)
-        comp.qrcode_path = ''
-        db.session.commit()
-        flash("二维码删除成功", "success")
-    else:
-        flash("没有二维码可删除", "warning")
-    return redirect(url_for('edit', id=id, selected=','.join(selected), kw=kw))
-
-
-@app.route('/batch_generate_qrcodes')
-def batch_generate_qrcodes():
-    selected, kw, _ = parse_args(request)
-    ids = [int(i) for i in request.args.get('ids', '').split(',') if i.strip().isdigit()]
-
-    if not ids:
-        # 为所有元器件生成二维码
-        comps = Component.query.all()
-    else:
-        comps = Component.query.filter(Component.id.in_(ids)).all()
-
-    success_count = 0
-    for comp in comps:
-        if not comp.qrcode_path or not os.path.exists(os.path.join(BASE_DIR, comp.qrcode_path)):
-            if generate_qrcode(comp):
-                success_count += 1
-
-    flash(f"批量生成二维码完成！共为 {success_count}/{len(comps)} 个元器件生成二维码", "success")
-    return redirect(url_for('index', selected=','.join(selected), kw=kw))
+        return render_template_string(BOM_TEMPLATE, import_res=None)
 
 
 # 扫码读取接口
@@ -3220,6 +3336,7 @@ def scan_qrcode():
                         'data': {
                             'id': comp.id,
                             'category': comp.category,
+                            'type': comp.type,
                             'model': comp.model,
                             'package': comp.package,
                             'supplier': comp.supplier,
@@ -3246,6 +3363,7 @@ def scan_qrcode():
                         'data': {
                             'id': comp.id,
                             'category': comp.category,
+                            'type': comp.type,
                             'model': comp.model,
                             'package': comp.package,
                             'supplier': comp.supplier,
@@ -3265,256 +3383,109 @@ def scan_qrcode():
         return jsonify({'code': 0, 'error': f'扫码读取失败：{str(e)}'})
 
 
-# 静态文件访问
+# 静态文件访问（修复跨磁盘路径问题）
 @app.route('/static/<path:path>')
-def send_static(path):
-    return send_from_directory(STATIC_FOLDER, path)
+def serve_static_file(path):
+    """提供静态文件访问，修复跨磁盘路径问题"""
+    try:
+        # 安全过滤，防止目录遍历攻击
+        safe_path = path.replace('..', '').replace('//', '/')
+
+        # 根据路径类型确定文件夹
+        if safe_path.startswith('img/'):
+            folder = IMG_FOLDER
+            sub_path = safe_path[4:]  # 移除 'img/' 前缀
+        elif safe_path.startswith('attach/'):
+            folder = ATTACH_FOLDER
+            sub_path = safe_path[7:]  # 移除 'attach/' 前缀
+        elif safe_path.startswith('qrcode/'):
+            folder = QRCODE_FOLDER
+            sub_path = safe_path[7:]  # 移除 'qrcode/' 前缀
+        else:
+            folder = STATIC_FOLDER
+            sub_path = safe_path
+
+        # 构建完整路径
+        file_path = os.path.join(folder, sub_path)
+
+        # 检查文件是否存在
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return send_file(file_path)
+        else:
+            # 文件不存在，返回404
+            return abort(404, description="文件未找到")
+    except Exception as e:
+        logger.error(f"提供静态文件失败: {str(e)}")
+        return abort(404, description="文件访问错误")
 
 
-# -------------------------- 数据库迁移函数 --------------------------
-def migrate_database():
-    """检查并更新数据库表结构"""
-    with app.app_context():
-        try:
-            from sqlalchemy import inspect, text
+# 动态文件访问（兼容旧路径）
+@app.route('/<path:path>')
+def serve_file(path):
+    """提供动态文件访问，修复跨磁盘路径问题"""
+    # 安全过滤，防止目录遍历攻击
+    safe_path = path.replace('..', '').replace('//', '/')
 
-            # 创建inspector对象
-            inspector = inspect(db.engine)
+    # 构建可能的文件路径
+    possible_paths = [
+        os.path.join(BASE_DIR, safe_path),
+        safe_path if os.path.isabs(safe_path) else None
+    ]
 
-            # 检查表是否存在
-            if 'component' in inspector.get_table_names():
-                # 获取现有列
-                columns = [col['name'] for col in inspector.get_columns('component')]
-                logger.info(f"当前数据库列: {columns}")
+    for file_path in possible_paths:
+        if file_path and os.path.exists(file_path) and os.path.isfile(file_path):
+            return send_file(file_path)
 
-                # 检查是否缺少必要的列
-                missing_columns = []
-                expected_columns = ['id', 'category', 'model', 'package', 'supplier', 'quantity', 'unit',
-                                    'location', 'price', 'buy_time', 'channel', 'remark', 'img_path',
-                                    'attach_path', 'qrcode_path']
-
-                for col in expected_columns:
-                    if col not in columns:
-                        missing_columns.append(col)
-
-                if missing_columns:
-                    logger.info(f"检测到缺失的列: {missing_columns}")
-
-                    # 尝试添加缺失的列
-                    for col in missing_columns:
-                        if col == 'qrcode_path':
-                            try:
-                                db.session.execute(
-                                    text('ALTER TABLE component ADD COLUMN qrcode_path VARCHAR(255) DEFAULT ""'))
-                                logger.info(f"已添加列: {col}")
-                            except Exception as e:
-                                logger.error(f"添加列 {col} 失败: {e}")
-                    db.session.commit()
-                else:
-                    logger.info("数据库表结构完整")
-            else:
-                # 表不存在，创建新表
-                logger.info("component表不存在，将创建新表")
-                db.create_all()
-
-        except Exception as e:
-            logger.error(f"数据库迁移检查失败: {e}")
-            # 如果出错，重新创建所有表
-            try:
-                db.drop_all()
-                db.create_all()
-                logger.info("数据库表已重建")
-            except Exception as e2:
-                logger.error(f"重建数据库表失败: {e2}")
+    # 如果文件不存在，返回404
+    return abort(404, description="文件未找到")
 
 
 # -------------------------- 程序入口（智能浏览器检测与打开） --------------------------
 if __name__ == '__main__':
-    # ... 之前的初始化代码保持不变 ...
+    # 初始化数据库
+    with app.app_context():
+        try:
+            # 确保实例目录存在
+            os.makedirs(app.instance_path, exist_ok=True)
 
-    # 导入必要的模块
-    import threading
-    import time
-    import subprocess
-    import sys
+            # 创建所有表（如果不存在）
+            db.create_all()
+            logger.info("数据库表初始化完成")
 
+            # 检查表是否存在并迁移字段
+            from sqlalchemy import inspect
 
-    def detect_available_browsers():
-        """检测工具中可用的浏览器"""
-        browsers = []
+            inspector = inspect(db.engine)
+            if 'component' in inspector.get_table_names():
+                logger.info("component表存在")
+                # 检查列结构
+                columns = [col['name'] for col in inspector.get_columns('component')]
+                logger.info(f"component表列: {columns}")
 
-        if IS_WINDOWS:
-            # Windows工具浏览器检测
-            browser_paths = [
-                ("Chrome", [
-                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                    os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe")
-                ]),
-                ("Edge", [
-                    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-                    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-                ]),
-                ("Firefox", [
-                    r"C:\Program Files\Mozilla Firefox\firefox.exe",
-                    r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe"
-                ]),
-                ("Opera", [
-                    r"C:\Program Files\Opera\launcher.exe",
-                    r"C:\Program Files (x86)\Opera\launcher.exe"
-                ]),
-                ("Brave", [
-                    r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-                    r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
-                ])
-            ]
-        else:
-            # Linux/Mac工具浏览器检测
-            browser_paths = [
-                ("Chrome", ["google-chrome", "chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]),
-                ("Firefox", ["firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"]),
-                ("Safari", ["safari", "open -a Safari"]),
-                ("Edge", ["microsoft-edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]),
-                ("Opera", ["opera", "/Applications/Opera.app/Contents/MacOS/Opera"])
-            ]
+                # 检查是否缺少必要字段
+                expected_columns = ['type', 'qrcode_path']
+                for col in expected_columns:
+                    if col not in columns:
+                        logger.info(f"检测到缺少列: {col}")
+            else:
+                logger.warning("component表不存在，将尝试重新创建")
+                db.create_all()
+        except Exception as e:
+            logger.error(f"数据库初始化失败: {e}")
+            import traceback
 
-        # 检测可用的浏览器
-        for browser_name, paths in browser_paths:
-            for path in paths:
-                if isinstance(path, str) and (path.startswith("/") or "\\" in path or ":" in path):
-                    # 完整路径检测
-                    if os.path.exists(path):
-                        browsers.append((browser_name, path))
-                        break
-                else:
-                    # 命令检测（Linux/Mac）
-                    try:
-                        if IS_WINDOWS:
-                            # Windows命令检测
-                            if " " in path:
-                                # 有空格的需要特殊处理
-                                if os.path.exists(path.split()[0]):
-                                    browsers.append((browser_name, path))
-                                    break
-                            else:
-                                result = subprocess.run(['where', path], capture_output=True, text=True, shell=True)
-                                if result.returncode == 0 and result.stdout.strip():
-                                    browsers.append((browser_name, result.stdout.strip().split('\n')[0]))
-                                    break
-                        else:
-                            # Linux/Mac命令检测
-                            result = subprocess.run(['which', path], capture_output=True, text=True)
-                            if result.returncode == 0:
-                                browsers.append((browser_name, result.stdout.strip()))
-                                break
-                    except:
-                        continue
+            traceback.print_exc()
 
-        return browsers
-
-
-    def open_browser_smart():
-        """智能打开浏览器"""
-        time.sleep(2.5)  # 等待服务器启动
-
-        url = "http://localhost:5000"
-
-        print(f"\n{'=' * 80}")
-        print("元器件库存管理工具 - 服务已启动")
-        print("=" * 80)
-        print(f"🎯 服务地址: {url}")
-        print(f"🌐 网络地址: http://{get_local_ip()}:5000")
-        print("\n🔄 正在检测可用浏览器...")
-
-        # 检测可用浏览器
-        available_browsers = detect_available_browsers()
-
-        if available_browsers:
-            print(f"✓ 检测到 {len(available_browsers)} 个可用浏览器:")
-            for i, (name, path) in enumerate(available_browsers, 1):
-                print(f"  {i}. {name} ({os.path.basename(path)})")
-
-            # 按优先级尝试打开浏览器
-            browser_priority = ["Chrome", "Edge", "Firefox", "Brave", "Opera", "Safari"]
-            opened = False
-
-            for priority_name in browser_priority:
-                for browser_name, browser_path in available_browsers:
-                    if browser_name == priority_name:
-                        try:
-                            print(f"\n正在尝试打开 {browser_name}...")
-
-                            if IS_WINDOWS:
-                                # Windows: 使用完整路径
-                                subprocess.Popen([browser_path, '--new-window', url])
-                            else:
-                                # Linux/Mac: 根据路径类型处理
-                                if browser_path.startswith('/Applications'):
-                                    # Mac应用程序
-                                    subprocess.Popen(
-                                        ['open', '-a', browser_path.replace('/Contents/MacOS/', '').rsplit('/', 1)[0],
-                                         url])
-                                else:
-                                    # Linux可执行文件
-                                    subprocess.Popen([browser_path, '--new-window', url])
-
-                            print(f"✓ 已启动 {browser_name} 浏览器")
-                            opened = True
-                            break
-                        except Exception as e:
-                            print(f"✗ {browser_name} 启动失败: {e}")
-
-                if opened:
-                    break
-        else:
-            print("⚠ 未检测到常见浏览器")
-
-        # 如果特定浏览器打开失败，尝试工具默认方式
-        if not opened:
-            print("\n尝试使用工具默认方式打开...")
-            try:
-                # 方法1: 使用os.startfile (Windows)
-                if IS_WINDOWS:
-                    os.startfile(url)
-                    print("✓ 使用工具默认方式打开")
-                    opened = True
-                else:
-                    # 方法2: 使用webbrowser模块
-                    import webbrowser
-                    webbrowser.open_new(url)
-                    print("✓ 调用默认浏览器")
-                    opened = True
-            except Exception as e:
-                print(f"✗ 工具默认方式失败: {e}")
-
-        # 如果还是失败，提供详细指引
-        if not opened:
-            print("\n" + "!" * 80)
-            print("❌ 自动打开浏览器失败")
-            print("!" * 80)
-            print("\n请手动执行以下操作:")
-            print(f"1. 打开任意浏览器（Chrome/Edge/Firefox/360/QQ浏览器等）")
-            print(f"2. 在地址栏输入: {url}")
-            print(f"3. 或扫描下方二维码访问（如果支持）")
-
-            # 尝试生成访问二维码（可选）
-            try:
-                import qrcode
-                qr = qrcode.QRCode(version=1, box_size=2, border=2)
-                qr.add_data(url)
-                qr.make(fit=True)
-
-                print("\n访问二维码:")
-                qr.print_ascii(invert=True)
-            except:
-                pass
-
-            print("\n💡 提示: 按 Ctrl+C 停止服务器")
-            print("=" * 80)
-        else:
-            print(f"\n✅ 浏览器已成功打开!")
-            print(f"💡 如果页面没有显示，请手动访问: {url}")
-            print("=" * 80)
+    # 显示启动信息
+    print("\n" + "=" * 80)
+    print("元器件库存管理工具 v1.0")
+    print("=" * 80)
+    print("🚀 启动流程:")
+    print("  ✓ 数据库初始化完成")
+    print("  ✓ 目录结构就绪")
+    print("  ▶ 启动Web服务器...")
+    print("  ⏳ 正在检测浏览器...")
+    print("=" * 80)
 
 
     def get_local_ip():
@@ -3529,16 +3500,124 @@ if __name__ == '__main__':
             return '127.0.0.1'
 
 
-    # 显示启动信息
-    print("\n" + "=" * 80)
-    print("元器件库存管理工具 v1.0")
-    print("=" * 80)
-    print("🚀 启动流程:")
-    print("  ✓ 数据库初始化完成")
-    print("  ✓ 目录结构就绪")
-    print("  ▶ 启动Web服务器...")
-    print("  ⏳ 正在检测浏览器...")
-    print("=" * 80)
+    def open_browser_smart():
+        """智能打开浏览器（Windows专用版，调用C盘浏览器）"""
+        # 等待Flask服务完全启动
+        time.sleep(3)
+
+        url = "http://localhost:5000"
+        local_ip = get_local_ip()
+
+        print(f"\n{'=' * 80}")
+        print("元器件库存管理工具 - 服务已启动")
+        print("=" * 80)
+        print(f"🎯 本地访问: {url}")
+        print(f"🌐 局域网访问: http://{local_ip}:5000")
+        print("=" * 80)
+
+        # Windows下常见浏览器路径（C盘）
+        browser_paths = [
+            # Chrome (多个可能位置)
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Users\{}\AppData\Local\Google\Chrome\Application\chrome.exe".format(os.getenv("USERNAME")),
+
+            # Microsoft Edge
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+
+            # Firefox
+            r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+
+            # 360浏览器
+            r"C:\Users\{}\AppData\Local\360Chrome\Chrome\Application\360chrome.exe".format(os.getenv("USERNAME")),
+            r"C:\Program Files (x86)\360\360Chrome\Chrome\Application\360chrome.exe",
+
+            # QQ浏览器
+            r"C:\Users\{}\AppData\Local\Tencent\QQBrowser\QQBrowser.exe".format(os.getenv("USERNAME")),
+            r"C:\Program Files (x86)\Tencent\QQBrowser\QQBrowser.exe",
+        ]
+
+        browser_opened = False
+        browser_name = ""
+
+        for browser_path in browser_paths:
+            # 格式化路径中的用户名
+            if "{}" in browser_path:
+                browser_path = browser_path.format(os.getenv("USERNAME"))
+
+            if os.path.exists(browser_path):
+                try:
+                    # 使用subprocess打开浏览器
+                    subprocess.Popen([browser_path, url])
+                    browser_name = os.path.basename(browser_path)
+                    print(f"✅ 已使用 {browser_name} 打开")
+                    browser_opened = True
+                    break
+                except Exception as e:
+                    print(f"⚠ 尝试打开 {browser_path} 失败: {str(e)}")
+                    continue
+
+        if not browser_opened:
+            print("🔍 未找到常用浏览器，尝试其他方法...")
+
+            # 方法1: 使用Windows注册表查找默认浏览器
+            try:
+                import winreg
+                # 从注册表获取默认浏览器
+                reg_path = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice"
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path) as key:
+                    prog_id, _ = winreg.QueryValueEx(key, "ProgId")
+
+                # 根据ProgId获取程序路径
+                if prog_id:
+                    # Chrome
+                    if "ChromeHTML" in prog_id:
+                        chrome_paths = [
+                            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+                        ]
+                        for path in chrome_paths:
+                            if os.path.exists(path):
+                                subprocess.Popen([path, url])
+                                print("✅ 已使用默认浏览器(Chrome)打开")
+                                browser_opened = True
+                                break
+
+                    # Edge
+                    elif "EdgeHTML" in prog_id or "MSEdgeHTM" in prog_id:
+                        edge_paths = [
+                            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+                        ]
+                        for path in edge_paths:
+                            if os.path.exists(path):
+                                subprocess.Popen([path, url])
+                                print("✅ 已使用默认浏览器(Edge)打开")
+                                browser_opened = True
+                                break
+            except:
+                pass
+
+        if not browser_opened:
+            # 方法2: 使用webbrowser模块作为备用
+            try:
+                import webbrowser
+                webbrowser.open_new(url)
+                print("✅ 已使用系统默认浏览器打开")
+            except:
+                # 方法3: 使用os.startfile
+                try:
+                    os.startfile(url)
+                    print("✅ 已调用系统关联程序打开")
+                except Exception as e:
+                    print(f"⚠ 所有自动打开方式均失败: {str(e)}")
+                    print(f"📌 请手动在浏览器中输入地址: {url}")
+
+        print("💡 提示：按 Ctrl+C 可停止服务")
+        print("=" * 80)
+
 
     # 启动浏览器线程
     browser_thread = threading.Thread(target=open_browser_smart, daemon=True)
@@ -3546,7 +3625,7 @@ if __name__ == '__main__':
 
     # 启动Flask服务
     try:
-        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+        app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)  # debug必须为False，打包后不能开
     except OSError as e:
         if "Address already in use" in str(e):
             print(f"⚠ 端口5000被占用，尝试5001端口...")
@@ -3568,5 +3647,5 @@ if __name__ == '__main__':
 
 
             threading.Thread(target=open_on_5001, daemon=True).start()
-
-            app.run(debug=True, host='0.0.0.0', port=5000)
+            # 这里的debug也必须改为False
+            app.run(debug=False, host='0.0.0.0', port=5001)
