@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # -------------------------- 导入依赖（新增二维码和图片处理包） --------------------------
-
+import re
 import socket
 import sys
 import os
@@ -13,6 +13,7 @@ from io import BytesIO
 from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file, jsonify, \
     send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
+import requests
 import pandas as pd
 import uuid
 import json
@@ -54,6 +55,9 @@ IMG_FOLDER = os.path.join(STATIC_FOLDER, 'img')
 ATTACH_FOLDER = os.path.join(STATIC_FOLDER, 'attach')
 QRCODE_FOLDER = os.path.join(STATIC_FOLDER, 'qrcode')
 BACKUP_FOLDER = os.path.join(BASE_DIR, 'backup')  # backup和static同级
+EXPORTS_FOLDER = os.path.join(BASE_DIR, 'exports')  # 导出文件保存位置
+DOCS_FOLDER = os.path.join(BASE_DIR, 'docs')  # 文档文件夹
+help_file_path = os.path.join(DOCS_FOLDER, 'HELP.txt')
 
 # -------------------------- Flask初始化+核心配置（无任何APP_DATA_DIR） --------------------------
 app = Flask(__name__)
@@ -68,20 +72,20 @@ DB_FILE = os.path.join(app.instance_path, 'component.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_FILE}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# 默认帮助文件
+HELP_FILE = os.path.join(DOCS_FOLDER, help_file_path)
+
 # -------------------------- 仅创建必要目录（只有backup，static已有） --------------------------
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
 # -------------------------- 数据库初始化 --------------------------
 db = SQLAlchemy(app)
 
-# 自动创建必要目录（新增二维码目录）
-for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, QRCODE_FOLDER, BACKUP_FOLDER]:
+# 自动创建必要目录（新增二维码目录和导出目录）
+for folder in [STATIC_FOLDER, IMG_FOLDER, ATTACH_FOLDER, QRCODE_FOLDER, BACKUP_FOLDER, EXPORTS_FOLDER, DOCS_FOLDER]:
     if not os.path.exists(folder):
         os.makedirs(folder)
         logger.info(f"自动创建文件夹：{folder}")
-
-# 默认帮助文件（简洁版，无多余内容）
-HELP_FILE = os.path.join(BASE_DIR, 'help.txt')
 
 # 允许的文件格式
 ALLOWED_IMG_EXT = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
@@ -341,33 +345,13 @@ def get_or_generate_qrcode(component_id):
 def get_help_content():
     try:
         # 首先检查程序数据目录下的help.txt
-        help_path = os.path.join(BASE_DIR, 'help.txt')
+        help_path = os.path.join(BASE_DIR, help_file_path)
         if os.path.exists(help_path):
             with open(help_path, 'r', encoding='utf-8') as f:
                 return f.read()
 
         # 如果不存在，创建一个默认的帮助文件
-        default_help = """元器件库存管理工具 - 使用说明
-
-主要功能：
-1. 元器件管理：添加、编辑、删除元器件信息
-2. BOM导入：支持Excel和粘贴方式批量导入
-3. 二维码管理：生成、扫描元器件二维码
-4. 数据备份：自动备份数据库和文件
-5. 搜索筛选：多种方式快速查找元器件
-
-基本操作：
-• 添加元器件：点击"添加元器件"按钮
-• 批量导入：点击"BOM批量导入"按钮
-• 搜索：在搜索框输入关键字
-• 导出数据：选中元器件后点击"导出选中"
-• 备份恢复：在工具设置中进行
-
-注意事项：
-1. 定期备份重要数据
-2. 确保图片文件不超过10MB
-3. 二维码扫描需要摄像头权限
-4. 恢复操作会覆盖当前数据"""
+        default_help = "帮助文件不存在，可能误删了"
 
         # 创建帮助文件
         with open(help_path, 'w', encoding='utf-8') as f:
@@ -589,6 +573,37 @@ SYSTEM_FIELDS = [
 ]
 REQUIRED_FIELDS = ['category', 'model', 'package']
 
+# 智能匹配关键词映射（新增）
+COLUMN_KEYWORDS = {
+    'category': ['品名', '名称', '物料名称', '元件名称', '元器件名称', '产品名称', 'item name', 'product name', 'component name', 'name', 'Name'],
+    'type': ['分类', '类别', '类型', '大类', 'category', 'type', 'class', '分类名称', '类型分类', 'cate', '物料分类', '分类名称','子类', '细分', '二级类', 'subtype', 'sub_type', 'sub category', '子类型', '二级分类'],
+    'model': ['型号', '规格', '料号', '物料号', '编码', 'code', 'model', 'part', 'part no', '型号规格', 'part number', '物料编码'],
+    'package': ['封装', '包装', '封装形式', 'package', '封装类型', 'footprint', '封装规格'],
+    'quantity': ['数量', '个数', 'quantity', 'qty', '数量(pcs)', 'pcs', 'qty.', 'qnty', '需求数量'],
+    'unit': ['单位', 'unit', '计量单位', 'uom', 'unit of measure'],
+    'price': ['单价', '价格', '采购价', 'price', 'cost', '单价(元)', '单价(￥)', 'unit price', '单价(USD)'],
+    'supplier': ['供应商', '厂家', '品牌', '厂商', 'supplier', 'vendor', 'manufacturer', '制造商'],
+    'channel': ['渠道', '采购渠道', '来源', 'channel', 'source', '采购来源'],
+    'remark': ['备注', '说明', '描述', 'remark', 'description', 'note', 'comments'],
+    'location': ['位置', '存放位置', '库位', '仓位', 'location', 'storage', '存储位置'],
+    'buy_time': ['采购时间', '购买时间', '日期', 'buy_time', 'date', '采购日期', '购买日期', '日期时间']
+}
+
+# 默认列顺序（当无法智能匹配时使用）
+DEFAULT_COLUMN_ORDER = [
+    'category',      # 第1列：品类
+    'model',         # 第2列：型号规格
+    'package',       # 第3列：封装
+    'quantity',      # 第4列：数量
+    'unit',          # 第5列：单位
+    'price',         # 第6列：单价
+    'supplier',      # 第7列：供应商
+    'channel',       # 第8列：采购渠道
+    'location',      # 第9列：存放位置
+    'buy_time',      # 第10列：采购时间
+    'remark'         # 第11列：备注
+]
+
 
 def parse_table_data(source, source_type):
     """解析粘贴/Excel数据 - 修复数值类型处理"""
@@ -597,7 +612,7 @@ def parse_table_data(source, source_type):
         if source_type == 'paste':
             lines = [l.strip() for l in source.split('\n') if l.strip()]
             if not lines:
-                return columns, preview, raw_data, "无有效粘贴数据", 0
+                return columns, preview, raw_data, [], "无有效粘贴数据", 0
             # 按制表符分割
             col_num = len(lines[0].split('\t'))
             columns = [f'列{i + 1}' for i in range(col_num)]
@@ -609,7 +624,7 @@ def parse_table_data(source, source_type):
 
         elif source_type == 'excel':
             if not allowed_file(source.filename, {'xlsx'}):
-                return columns, preview, raw_data, "仅支持xlsx格式Excel文件", 0
+                return columns, preview, raw_data, [], "仅支持xlsx格式Excel文件", 0
 
             # 使用pandas读取，但保持原始数据类型
             import pandas as pd
@@ -634,12 +649,119 @@ def parse_table_data(source, source_type):
 
             row_count = len(raw_data)
 
-        return columns, preview, raw_data, "", row_count
+        # 智能匹配列名（新增）
+        default_mapping = smart_column_matching(columns, preview)
+
+        return columns, preview, raw_data, default_mapping, "", row_count
 
     except Exception as e:
         logger.error(f"表格解析失败：{str(e)}", exc_info=True)
-        return columns, preview, raw_data, f"解析失败：{str(e)}", 0
+        return columns, preview, raw_data, [], f"解析失败：{str(e)}", 0
 
+
+
+
+
+def smart_column_matching(columns, preview_data=None):
+    """
+    智能匹配列名，返回默认映射字典
+    columns: 列名列表
+    preview_data: 预览数据，用于分析数据类型
+    返回: {列名: 系统字段} 的字典
+    """
+    mapping = {}
+    matched_fields = set()  # 已匹配的字段
+
+    # 阶段1：基于列名关键词匹配（高优先级）
+    for col_idx, col_name in enumerate(columns):
+        col_name_lower = str(col_name).lower().strip()
+        col_name_original = str(col_name).strip()
+
+        # 跳过空列名
+        if not col_name_lower or col_name_lower == 'nan':
+            mapping[col_name_original] = ''
+            continue
+
+        # 遍历关键词映射
+        matched = False
+        for field, keywords in COLUMN_KEYWORDS.items():
+            if field in matched_fields:
+                continue  # 该字段已匹配，跳过
+
+            for keyword in keywords:
+                # 检查关键词是否出现在列名中
+                if keyword.lower() in col_name_lower:
+                    mapping[col_name_original] = field
+                    matched_fields.add(field)
+                    matched = True
+                    break
+            if matched:
+                break
+
+        if not matched:
+            mapping[col_name_original] = ''
+
+    # 阶段2：如果前3列没有匹配到必填字段，使用默认顺序
+    required_not_matched = [f for f in REQUIRED_FIELDS if f not in matched_fields]
+
+    if required_not_matched and len(columns) >= len(REQUIRED_FIELDS):
+        # 按默认顺序尝试匹配前几列
+        for i, col_name in enumerate(columns[:len(DEFAULT_COLUMN_ORDER)]):
+            if i < len(DEFAULT_COLUMN_ORDER):
+                field = DEFAULT_COLUMN_ORDER[i]
+                # 如果该字段还未匹配，且当前列也未匹配
+                if field in required_not_matched and mapping.get(str(col_name).strip()) == '':
+                    mapping[str(col_name).strip()] = field
+                    matched_fields.add(field)
+                    if field in required_not_matched:
+                        required_not_matched.remove(field)
+
+    # 阶段3：如果还有必填字段未匹配，强制使用前几列
+    if required_not_matched:
+        # 按顺序将必填字段分配给未匹配的列
+        available_cols = [col for col in columns if mapping.get(str(col).strip()) == '']
+        for i, field in enumerate(required_not_matched):
+            if i < len(available_cols):
+                mapping[str(available_cols[i]).strip()] = field
+                matched_fields.add(field)
+
+    # 阶段4：基于预览数据分析类型匹配（如果提供了预览数据）
+    if preview_data and len(preview_data) > 0:
+        for col_idx, col_name in enumerate(columns):
+            current_field = mapping.get(str(col_name).strip())
+            if current_field == '' and col_idx < len(preview_data[0]):
+                # 获取预览数据
+                sample_values = [row[col_idx] for row in preview_data[:3] if col_idx < len(row)]
+
+                # 尝试根据数据类型猜测字段
+                for val in sample_values:
+                    val_str = str(val).strip()
+
+                    # 检查是否为数量（数字）
+                    if any(char.isdigit() for char in val_str) and 'quantity' not in matched_fields:
+                        try:
+                            float_val = float(val_str.replace(',', ''))
+                            if 0 <= float_val <= 1000000:  # 合理数量范围
+                                mapping[str(col_name).strip()] = 'quantity'
+                                matched_fields.add('quantity')
+                                break
+                        except:
+                            pass
+
+                    # 检查是否为价格（带货币符号或小数点）
+                    elif ('¥' in val_str or '￥' in val_str or '$' in val_str or
+                          ('.' in val_str and len(val_str.split('.')[-1]) == 2)) and 'price' not in matched_fields:
+                        mapping[str(col_name).strip()] = 'price'
+                        matched_fields.add('price')
+                        break
+
+                    # 检查是否为日期
+                    elif re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', val_str) and 'buy_time' not in matched_fields:
+                        mapping[str(col_name).strip()] = 'buy_time'
+                        matched_fields.add('buy_time')
+                        break
+
+    return mapping
 
 def map_table_data(raw_data, columns, mapping, batch_vals):
     """映射表格数据为字典列表 - 修复数量处理"""
@@ -894,11 +1016,306 @@ MAIN_TEMPLATE = '''
     <div class="top-nav">
         <h4>元器件库存管理工具 - v1</h4>
         <div>
+            <a href="{{ url_for('ai_tools') }}" class="top-btn" target="_blank">AI工具</a>
             <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#settingModal">工具设置</a>
             <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#helpModal">使用说明</a>
-            <a href="#" class="top-btn" data-bs-toggle="modal" data-bs-target="#qrcodeModal">扫码管理</a>
+            <a href="#" class="top-btn" onclick="showQRCodeTools()">扫码管理</a>
+            
         </div>
     </div>
+
+    <!-- 二维码扫码弹窗 -->
+    <!-- 二维码扫码弹窗（修复版） -->
+    <div class="modal fade" id="qrcodeModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">二维码扫码管理</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <div id="qrcodeStatus" class="alert alert-secondary p-2">摄像头状态：未初始化</div>
+                        <div style="position:relative;">
+                            <video id="qrcodeVideo" playsinline muted style="width:100%; border-radius:6px; background:#000; max-height:360px;"></video>
+                            <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:60%;height:50%;border:3px dashed rgba(255,0,0,0.9);border-radius:8px;pointer-events:none;box-shadow:0 0 0 4px rgba(255,0,0,0.05);"></div>
+                        </div>
+                        <div class="mt-2 d-flex gap-2">
+                            <button id="qrcodeStartBtn" class="btn btn-primary btn-sm" onclick="qrcodeStartScanner()">开始扫描</button>
+                            <button id="qrcodeStopBtn" class="btn btn-secondary btn-sm" onclick="qrcodeStopScanner()" style="display:none;">停止扫描</button>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="qrcodeRefreshScanner()">刷新摄像头</button>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">或上传二维码图片：</label>
+                        <div class="input-group">
+                            <input type="file" id="qrcodeFileInput" accept="image/*" class="form-control form-control-sm">
+                            <button class="btn btn-primary btn-sm" onclick="qrcodeScanFromFile()">上传并识别</button>
+                        </div>
+                    </div>
+                    <div id="qrcodeResultBox" class="border rounded p-2">
+                        <div id="qrcodeResultInner">等待扫码...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 扫码核心JS：指定ZXing稳定版本，修复所有执行问题 -->
+    <script src="https://unpkg.com/@zxing/library@0.20.0"></script>
+    <script>
+        // 全局变量规范化定义，避免作用域问题
+        let qrcodeReader = null, qrcodeVideoStream = null;
+        // 提前获取模态框元素，避免重复查询
+        const qrcodeModalEl = document.getElementById('qrcodeModal');
+        let qrcodeModalInstance = null;
+
+        // 初始化模态框（页面加载完成后）
+        document.addEventListener('DOMContentLoaded', function() {
+            if (qrcodeModalEl) {
+                qrcodeModalInstance = new bootstrap.Modal(qrcodeModalEl);
+                // 模态框关闭时自动停止扫码
+                qrcodeModalEl.addEventListener('hidden.bs.modal', function() {
+                    qrcodeStopScanner();
+                    document.getElementById('qrcodeResultInner').textContent = '等待扫码...';
+                    document.getElementById('qrcodeStatus').className = 'alert alert-secondary p-2';
+                    document.getElementById('qrcodeStatus').textContent = '摄像头状态：未初始化';
+                });
+            } else {
+                console.error('扫码模态框元素qrcodeModal未找到！');
+            }
+        });
+
+        // 打开扫码弹窗（核心修复：校验模态框实例是否存在）
+        function showQRCodeTools(){
+            if (!qrcodeModalInstance) {
+                alert('扫码功能初始化失败，请刷新页面重试！');
+                console.error('Bootstrap模态框实例未初始化');
+                return;
+            }
+            qrcodeModalInstance.show();
+        }
+
+        // 关闭扫码弹窗
+        function hideQRCodeTools(){
+            if (qrcodeModalInstance) qrcodeModalInstance.hide();
+        }
+
+        // 更新摄像头状态提示
+        function qrcodeSetStatus(msg, cls='secondary'){
+            const el = document.getElementById('qrcodeStatus');
+            if (!el) return;
+            el.className = `alert alert-${cls} p-2`;
+            el.textContent = `摄像头状态：${msg}`;
+        }
+
+        // 开始扫描（修复权限判断、兼容桌面/移动端）
+        async function qrcodeStartScanner(){
+            const startBtn = document.getElementById('qrcodeStartBtn');
+            const stopBtn = document.getElementById('qrcodeStopBtn');
+            const video = document.getElementById('qrcodeVideo');
+            if (!startBtn || !stopBtn || !video) {
+                alert('扫码组件缺失，请刷新页面！');
+                return;
+            }
+
+            try{
+                // 浏览器兼容性前置判断
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    qrcodeSetStatus('浏览器不支持摄像头（请用Chrome/Edge/Firefox）', 'danger');
+                    alert('你的浏览器不支持摄像头访问，请使用Chrome、Edge、Firefox等现代浏览器！');
+                    return;
+                }
+
+                qrcodeSetStatus('准备中...', 'info');
+                // 先停止原有流，避免摄像头占用
+                if (qrcodeVideoStream) {
+                    qrcodeVideoStream.getTracks().forEach(t => t.stop());
+                    qrcodeVideoStream = null;
+                }
+
+                // 兼容桌面（无后置摄像头）和移动端
+                const constraints = { 
+                    video: { 
+                        facingMode: 'environment', 
+                        width: { ideal: 640 }, 
+                        height: { ideal: 480 } 
+                    } 
+                };
+                // 桌面端无后置摄像头时，回退到任意摄像头
+                qrcodeVideoStream = await navigator.mediaDevices.getUserMedia(constraints).catch(async () => {
+                    return await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+                });
+
+                video.srcObject = qrcodeVideoStream;
+                await video.play();
+
+                // 初始化ZXing扫码器（稳定版本）
+                qrcodeReader = new ZXing.BrowserMultiFormatReader();
+                qrcodeSetStatus('已启动，对准二维码...', 'success');
+                startBtn.style.display='none'; 
+                stopBtn.style.display='inline-block';
+
+                // 扫码识别（去重：避免重复识别同一二维码）
+                let lastQrText = '';
+                qrcodeReader.decodeFromVideoDevice(null, video, (result, err) => {
+                    if (result && result.text !== lastQrText) {
+                        lastQrText = result.text;
+                        qrcodeStopScanner(); // 识别后自动停止
+                        qrcodeOnDecode(result.text); // 处理识别结果
+                    }
+                    // 忽略普通错误（如画面模糊）
+                    if (err && !err.message.includes('No result')) {
+                        console.warn('扫码错误：', err.message);
+                    }
+                });
+            }catch(e){
+                console.error('启动摄像头失败：', e);
+                if(e.name === 'NotAllowedError') {
+                    qrcodeSetStatus('摄像头权限被拒绝，请在浏览器设置中开启', 'danger');
+                } else if(e.name === 'NotFoundError') {
+                    qrcodeSetStatus('未检测到摄像头设备', 'danger');
+                } else {
+                    qrcodeSetStatus(`启动失败：${e.message || '未知错误'}`, 'danger');
+                }
+                startBtn.style.display='inline-block'; 
+                stopBtn.style.display='none';
+            }
+        }
+
+        // 停止扫描（修复流释放、视频重置）
+        function qrcodeStopScanner(){
+            const startBtn = document.getElementById('qrcodeStartBtn');
+            const stopBtn = document.getElementById('qrcodeStopBtn');
+            const video = document.getElementById('qrcodeVideo');
+            if (!startBtn || !stopBtn || !video) return;
+
+            if (qrcodeReader) {
+                try{ qrcodeReader.reset(); }catch{} 
+                qrcodeReader = null;
+            }
+            if (qrcodeVideoStream) {
+                qrcodeVideoStream.getTracks().forEach(t => t.stop()); 
+                qrcodeVideoStream = null;
+            }
+            // 重置视频元素，避免画面残留
+            video.pause();
+            video.srcObject = null;
+
+            qrcodeSetStatus('已停止', 'secondary');
+            startBtn.style.display='inline-block'; 
+            stopBtn.style.display='none';
+        }
+
+        // 刷新摄像头
+        function qrcodeRefreshScanner(){ 
+            qrcodeStopScanner(); 
+            setTimeout(qrcodeStartScanner, 500); 
+        }
+
+        // 上传图片识别二维码（修复前端识别失败的提示）
+        async function qrcodeScanFromFile(){
+            const fi = document.getElementById('qrcodeFileInput');
+            if (!fi.files || fi.files.length === 0) {
+                alert('请选择二维码图片！');
+                return;
+            }
+            const file = fi.files[0];
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.src = url;
+
+            img.onload = async ()=>{
+                try{
+                    const reader = new ZXing.BrowserMultiFormatReader();
+                    const res = await reader.decodeFromImage(img);
+                    qrcodeOnDecode(res.text);
+                }catch(err){
+                    console.error('客户端识别失败，尝试后端识别：', err);
+                    qrcodeShowResult('客户端识别失败，正在尝试后端识别...', true);
+                    // 调用后端接口识别
+                    try{
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        const resp = await fetch('/scan_qrcode_from_image', {method:'POST', body:formData});
+                        if(!resp.ok) throw new Error(`后端返回${resp.status}`);
+                        const data = await resp.json();
+                        if(data.code === 1 && data.data) {
+                            qrcodeShowResult('✓ 后端识别成功！', true);
+                            setTimeout(() => qrcodeOnDecode(data.qrcode_data || data.data), 800);
+                        }else{
+                            qrcodeShowResult(`后端识别失败：${data.error || '未知错误'}`, false);
+                        }
+                    }catch(backErr){
+                        console.error('后端识别失败：', backErr);
+                        qrcodeShowResult(`识别失败：客户端+后端均无法识别（${backErr.message}）`, false);
+                    }
+                }finally{
+                    URL.revokeObjectURL(url);
+                    fi.value = ''; // 清空文件选择框
+                }
+            };
+
+            img.onerror = ()=>{
+                qrcodeShowResult('图片加载失败，请选择有效图片！', false);
+                URL.revokeObjectURL(url);
+                fi.value = '';
+            };
+        }
+
+        // 处理识别结果（调用后端接口查询元器件）
+        async function qrcodeOnDecode(text){
+            qrcodeShowResult('已识别二维码，正在查询元器件...', true);
+            try{
+                const resp = await fetch('/scan_qrcode', {
+                    method:'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({data: text})
+                });
+                const j = await resp.json();
+                if (j && j.code === 1 && j.data) {
+                    const d = j.data;
+                    let html = `
+                    <div><strong>✓ 扫码成功！找到对应元器件</strong></div>
+                    <div class="mt-2"><strong>ID：</strong>${d.id || 'N/A'}</div>
+                    <div><strong>品类/类别：</strong>${d.category || '未知'} / ${d.type || '无'}</div>
+                    <div><strong>型号/封装：</strong>${d.model || '未知'} / ${d.package || '未知'}</div>
+                    <div><strong>数量/单位：</strong>${d.quantity || 0} ${d.unit || '个'}</div>
+                    <div><strong>存放位置：</strong>${d.location || '未知'}</div>
+                    <div class="mt-3 d-flex gap-2">
+                        <a href="/edit/${d.id}" class="btn btn-sm btn-primary" target="_self">📝 打开元器件详情</a>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="qrcodeContinueScan()">继续扫码</button>
+                    </div>
+                    `;
+                    qrcodeShowResult(html, true, true);
+                }else{
+                    qrcodeShowResult(`未找到元器件：${j.error || '二维码数据不匹配'}`, false);
+                }
+            }catch(e){
+                console.error('查询元器件失败：', e);
+                qrcodeShowResult(`请求失败：${e.message}`, false);
+            }
+        }
+
+        // 显示结果（修复HTML渲染、样式）
+        function qrcodeShowResult(msg, ok, rawHtml=false){
+            const box = document.getElementById('qrcodeResultInner');
+            if (!box) return;
+            if(rawHtml){
+                box.innerHTML = `<div class="alert alert-success p-2">${msg}</div>`;
+                return;
+            }
+            const cls = ok ? 'alert-success' : 'alert-danger';
+            box.innerHTML = `<div class="${cls} p-2">${msg}</div>`;
+        }
+
+        // 继续扫码（修复原函数的DOM操作错误）
+        function qrcodeContinueScan(){
+            const box = document.getElementById('qrcodeResultInner');
+            if (box) box.textContent = '等待扫码...';
+            qrcodeSetStatus('已停止', 'secondary');
+        }
+    </script>
 
     <div class="container-main">
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -1127,7 +1544,7 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 导出弹窗（修改：增加二维码和类别导出选项） -->
+    <!-- 导出弹窗（增强版：支持自定义文件名、新增/追加选项） -->
     <div class="modal fade" id="exportModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -1153,6 +1570,17 @@ MAIN_TEMPLATE = '''
                             <div class="col-md-4"><input type="checkbox" name="fields" value="remark"> 备注</div>
                         </div>
                         <div class="mb-3">
+                            <label class="form-label">文件名设置</label>
+                            <div class="input-group">
+                                <select name="filename_mode" id="filenameMode" class="form-select" style="max-width:120px">
+                                    <option value="default">默认名称</option>
+                                    <option value="custom">自定义名称</option>
+                                </select>
+                                <input type="text" name="custom_filename" id="customFilename" class="form-control" placeholder="如：2026年2月库存" style="display:none;" maxlength="50">
+                                <small class="form-text text-muted ms-2" style="width:100%;">默认格式：元器件库存_时间戳.xlsx</small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
                             <label>导出格式</label>
                             <div class="form-check form-check-inline">
                                 <input type="radio" name="format" value="xlsx" checked class="form-check-input">
@@ -1165,6 +1593,24 @@ MAIN_TEMPLATE = '''
                             <div class="form-check form-check-inline">
                                 <input type="radio" name="format" value="zip" class="form-check-input">
                                 <label class="form-check-label">打包ZIP(包含二维码和图片)</label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label>导出方式</label>
+                            <div class="form-check">
+                                <input type="radio" name="export_mode" value="new" checked class="form-check-input" id="modeNew">
+                                <label class="form-check-label" for="modeNew">
+                                    📄 新增导出（创建新文件）
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input type="radio" name="export_mode" value="append" class="form-check-input" id="modeAppend">
+                                <label class="form-check-label" for="modeAppend">
+                                    ➕ 追加导出（添加到现有Excel，需选择文件）
+                                </label>
+                                <select name="append_file" id="appendFile" class="form-select form-select-sm mt-2" style="display:none; max-width:300px;">
+                                    <option value="">-- 选择目标Excel文件 --</option>
+                                </select>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -1240,128 +1686,7 @@ MAIN_TEMPLATE = '''
         </div>
     </div>
 
-    <!-- 扫码管理弹窗（修复版） -->
-    <div class="modal fade" id="qrcodeModal" tabindex="-1" data-bs-backdrop="static">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title">扫码管理</h5>
-                    <button class="btn-close btn-close-white" data-bs-dismiss="modal" onclick="stopScanner()"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <h6>📱 扫码读取元器件信息</h6>
-                            <p class="text-muted small">使用手机扫描元器件二维码，快速查看详细信息</p>
-
-                            <!-- 摄像头状态显示 -->
-                            <div id="cameraStatus" class="alert alert-info">
-                                <p><strong>📷 摄像头准备就绪</strong></p>
-                                <p>点击"开始扫描"启动摄像头</p>
-                            </div>
-
-                            <!-- 摄像头容器 -->
-                            <div id="cameraContainer" class="text-center" style="display: none;">
-                                <div id="videoContainer" style="position: relative; display: inline-block;">
-                                    <video id="videoElement" width="100%" style="max-width: 300px; border: 2px solid #0d6efd; border-radius: 4px; background: #000;"></video>
-                                    <div id="scanOverlay" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 70%; height: 70%; border: 2px solid red; box-sizing: border-box; pointer-events: none;"></div>
-                                </div>
-                                <div id="scanControls" class="mt-3">
-                                    <button id="startScanBtn" class="btn btn-primary btn-sm" onclick="startScanner()">
-                                        <span class="spinner-border spinner-border-sm d-none" id="scanSpinner"></span>
-                                        <span id="scanBtnText">开始扫描</span>
-                                    </button>
-                                    <button id="stopScanBtn" class="btn btn-secondary btn-sm" onclick="stopScanner()" style="display: none;">停止扫描</button>
-                                    <button id="switchCameraBtn" class="btn btn-outline-secondary btn-sm" onclick="switchCamera()" style="display: none;">切换摄像头</button>
-                                </div>
-                            </div>
-
-                            <!-- 文件上传区域 -->
-                            <div id="fileUploadArea" class="mt-3">
-                                <label class="fw-bold">📤 或上传二维码图片扫描：</label>
-                                <div class="input-group mt-2">
-                                    <input type="file" id="qrcodeFile" accept="image/*" class="form-control form-control-sm">
-                                    <button class="btn btn-primary btn-sm" onclick="scanQRCodeFromFile()">上传并扫描</button>
-                                </div>
-                                <p class="text-muted small mt-1">支持PNG、JPG格式的二维码图片</p>
-                            </div>
-
-                            <!-- 扫描结果区域 -->
-                            <div id="scanResult" class="mt-3 p-3 border rounded" style="min-height: 120px; background: #f8f9fa;">
-                                <h6>📋 扫描结果：</h6>
-                                <div id="resultContent" class="text-center text-muted py-3">
-                                    等待扫描结果...
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-md-6">
-                            <h6>📄 批量二维码操作</h6>
-                            <div class="d-grid gap-2">
-                                <button class="btn btn-outline-primary" onclick="batchGenerateQRCodes()">批量生成二维码</button>
-                                <a href="{{url_for('batch_generate_qrcodes')}}" class="btn btn-outline-info">为所有元器件生成二维码</a>
-                            </div>
-
-                            <div class="mt-4">
-                                <h6>💡 使用说明：</h6>
-                                <div class="accordion" id="qrHelpAccordion">
-                                    <div class="accordion-item">
-                                        <h6 class="accordion-header">
-                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#qrMethod1">
-                                                方法1：摄像头扫码
-                                            </button>
-                                        </h6>
-                                        <div id="qrMethod1" class="accordion-collapse collapse">
-                                            <div class="accordion-body small">
-                                                <ol>
-                                                    <li>点击<b>"开始扫描"</b>按钮启动摄像头</li>
-                                                    <li>将二维码对准红色扫描框内</li>
-                                                    <li>工具会自动识别并显示元器件信息</li>
-                                                    <li>识别成功后可继续扫描下一个</li>
-                                                </ol>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="accordion-item">
-                                        <h6 class="accordion-header">
-                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#qrMethod2">
-                                                方法2：上传图片扫描
-                                            </button>
-                                        </h6>
-                                        <div id="qrMethod2" class="accordion-collapse collapse">
-                                            <div class="accordion-body small">
-                                                <ol>
-                                                    <li>点击<b>"选择文件"</b>按钮</li>
-                                                    <li>选择保存的二维码图片</li>
-                                                    <li>点击<b>"上传并扫描"</b></li>
-                                                    <li>工具会自动解析二维码内容</li>
-                                                </ol>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 设备兼容性提示 -->
-                            <div class="mt-4 alert alert-warning small">
-                                <h6>⚠️ 注意事项：</h6>
-                                <ul class="mb-0">
-                                    <li>请确保已授予浏览器摄像头权限</li>
-                                    <li>苹果设备需要使用Safari浏览器</li>
-                                    <li>确保摄像头未被其他程序占用</li>
-                                    <li>光线充足，二维码清晰无遮挡</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopScanner()">关闭</button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- 二维码扫码功能已拆分为独立页面 /qrcode_tools，原 modal 已移除 -->
 
     <!-- 打印区域 -->
     <div id="printArea" class="d-none p-4">
@@ -1450,8 +1775,57 @@ MAIN_TEMPLATE = '''
         function openExport() {
             let ids = getSelected();
             document.getElementById('exportIds').value = ids.join(',');
+            // 加载现有的Excel文件列表
+            loadExistingExcelFiles();
             new bootstrap.Modal(document.getElementById('exportModal')).show();
         }
+
+        // 加载现有的Excel文件列表（用于追加导出）
+        async function loadExistingExcelFiles() {
+            try {
+                const resp = await fetch('/get_export_files');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const select = document.getElementById('appendFile');
+                select.innerHTML = '<option value="">-- 选择目标Excel文件 --</option>';
+                if (data.files && data.files.length > 0) {
+                    data.files.forEach(file => {
+                        const opt = document.createElement('option');
+                        opt.value = file.path;
+                        opt.textContent = file.name + ' (' + file.time + ')';
+                        select.appendChild(opt);
+                    });
+                }
+            } catch(e) {
+                console.warn('加载Excel文件列表失败:', e);
+            }
+        }
+
+        // 文件名模式切换
+        document.addEventListener('DOMContentLoaded', function() {
+            const modeSelect = document.getElementById('filenameMode');
+            const customInput = document.getElementById('customFilename');
+            if (modeSelect) {
+                modeSelect.addEventListener('change', function() {
+                    customInput.style.display = this.value === 'custom' ? 'block' : 'none';
+                });
+            }
+            
+            // 导出方式切换
+            const modeNew = document.getElementById('modeNew');
+            const modeAppend = document.getElementById('modeAppend');
+            const appendSelect = document.getElementById('appendFile');
+            if (modeNew) {
+                modeNew.addEventListener('change', function() {
+                    if (this.checked) appendSelect.style.display = 'none';
+                });
+            }
+            if (modeAppend) {
+                modeAppend.addEventListener('change', function() {
+                    if (this.checked) appendSelect.style.display = 'block';
+                });
+            }
+        });
 
         function toggleColumn(type) {
             const table = document.getElementById('componentTable');
@@ -1498,372 +1872,7 @@ MAIN_TEMPLATE = '''
             }
         }
 
-        // ===================== 扫码功能修复 =====================
-
-        // 扫码相关变量
-        let videoStream = null;
-        let currentCamera = 'environment'; // 'user'为前置，'environment'为后置
-        let isScanning = false;
-        let codeReader = null;
-
-        // 初始化扫码管理弹窗
-        document.getElementById('qrcodeModal').addEventListener('shown.bs.modal', function() {
-            console.log('扫码弹窗打开，初始化摄像头');
-            initCamera();
-        });
-
-        document.getElementById('qrcodeModal').addEventListener('hidden.bs.modal', function() {
-            console.log('扫码弹窗关闭，清理资源');
-            stopScanner();
-        });
-
-        // 初始化摄像头
-        function initCamera() {
-            const cameraStatus = document.getElementById('cameraStatus');
-            const cameraContainer = document.getElementById('cameraContainer');
-
-            // 检查浏览器支持
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                cameraStatus.innerHTML = `
-                    <div class="alert alert-warning">
-                        <p><strong>⚠️ 浏览器不支持摄像头功能</strong></p>
-                        <p class="mb-0">请升级浏览器或使用文件上传方式</p>
-                    </div>
-                `;
-                return;
-            }
-
-            // 检查HTTPS/localhost（iOS要求）
-            const isLocalhost = window.location.hostname === 'localhost' || 
-                               window.location.hostname === '127.0.0.1';
-            const isHttps = window.location.protocol === 'https:';
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
-            if (isIOS && !isHttps && !isLocalhost) {
-                cameraStatus.innerHTML = `
-                    <div class="alert alert-warning">
-                        <p><strong>⚠️ iOS设备限制</strong></p>
-                        <p>iOS设备需要HTTPS或localhost环境</p>
-                        <p class="mb-0">请使用文件上传方式扫描二维码</p>
-                    </div>
-                `;
-                return;
-            }
-
-            // 显示摄像头可用
-            cameraStatus.innerHTML = `
-                <div class="alert alert-success">
-                    <p><strong>✅ 摄像头可用</strong></p>
-                    <p class="mb-0">点击下方"开始扫描"按钮启动摄像头</p>
-                </div>
-            `;
-            cameraContainer.style.display = 'block';
-        }
-
-        // 启动扫码器
-        async function startScanner() {
-            console.log('开始启动扫码器...');
-
-            const startBtn = document.getElementById('startScanBtn');
-            const stopBtn = document.getElementById('stopScanBtn');
-            const switchBtn = document.getElementById('switchCameraBtn');
-            const spinner = document.getElementById('scanSpinner');
-            const btnText = document.getElementById('scanBtnText');
-            const videoElement = document.getElementById('videoElement');
-            const resultContent = document.getElementById('resultContent');
-
-            try {
-                // 显示加载状态
-                startBtn.disabled = true;
-                spinner.classList.remove('d-none');
-                btnText.textContent = '准备中...';
-                resultContent.innerHTML = '<div class="text-primary"><span class="spinner-border spinner-border-sm"></span> 正在启动摄像头...</div>';
-
-                // 停止之前的流
-                if (videoStream) {
-                    videoStream.getTracks().forEach(track => track.stop());
-                    videoStream = null;
-                }
-
-                // 获取摄像头权限
-                videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: currentCamera,
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        frameRate: { ideal: 30 }
-                    }
-                });
-
-                console.log('摄像头权限获取成功');
-
-                // 设置视频元素
-                videoElement.srcObject = videoStream;
-                videoElement.setAttribute('playsinline', true); // iOS需要
-                videoElement.setAttribute('autoplay', true);
-                videoElement.setAttribute('muted', true);
-
-                // 等待视频加载
-                await new Promise((resolve) => {
-                    videoElement.onloadedmetadata = () => {
-                        videoElement.play();
-                        resolve();
-                    };
-                });
-
-                console.log('视频流播放成功');
-
-                // 初始化ZXing
-                codeReader = new ZXing.BrowserMultiFormatReader();
-
-                // 更新UI状态
-                startBtn.style.display = 'none';
-                stopBtn.style.display = 'inline-block';
-                switchBtn.style.display = 'inline-block';
-                spinner.classList.add('d-none');
-                btnText.textContent = '开始扫描';
-                startBtn.disabled = false;
-
-                // 开始解码
-                isScanning = true;
-                decodeContinuously();
-
-            } catch (error) {
-                console.error('启动摄像头失败:', error);
-
-                let errorMsg = error.message || '未知错误';
-                if (error.name === 'NotAllowedError') {
-                    errorMsg = '摄像头权限被拒绝，请允许摄像头访问';
-                } else if (error.name === 'NotFoundError') {
-                    errorMsg = '未找到摄像头设备';
-                } else if (error.name === 'NotReadableError') {
-                    errorMsg = '摄像头被其他程序占用';
-                }
-
-                resultContent.innerHTML = `
-                    <div class="alert alert-danger">
-                        <p><strong>❌ 启动摄像头失败</strong></p>
-                        <p class="mb-2">${errorMsg}</p>
-                        <button class="btn btn-sm btn-outline-primary" onclick="useFileUpload()">改用文件上传</button>
-                    </div>
-                `;
-
-                // 重置UI
-                startBtn.disabled = false;
-                spinner.classList.add('d-none');
-                btnText.textContent = '开始扫描';
-            }
-        }
-
-        // 连续解码
-        function decodeContinuously() {
-            if (!codeReader || !isScanning) return;
-
-            const videoElement = document.getElementById('videoElement');
-            const resultContent = document.getElementById('resultContent');
-
-            codeReader.decodeFromVideoDevice(null, videoElement, (result, error) => {
-                if (result) {
-                    console.log('解码成功:', result.text);
-                    // 成功解码
-                    onScanSuccess(result.text);
-
-                    // 暂停2秒后继续扫描
-                    setTimeout(() => {
-                        if (isScanning) {
-                            decodeContinuously();
-                        }
-                    }, 2000);
-                    return;
-                }
-
-                if (error) {
-                    // 忽略"未找到二维码"的错误
-                    if (!(error instanceof ZXing.NotFoundException)) {
-                        console.warn('解码错误:', error);
-                    }
-                }
-
-                // 继续扫描
-                if (isScanning) {
-                    requestAnimationFrame(decodeContinuously);
-                }
-            });
-        }
-
-        // 停止扫码器
-        function stopScanner() {
-            console.log('停止扫码器');
-            isScanning = false;
-
-            // 停止视频流
-            if (videoStream) {
-                videoStream.getTracks().forEach(track => {
-                    track.stop();
-                });
-                videoStream = null;
-            }
-
-            // 停止ZXing解码
-            if (codeReader) {
-                codeReader.reset();
-                codeReader = null;
-            }
-
-            // 重置UI
-            const startBtn = document.getElementById('startScanBtn');
-            const stopBtn = document.getElementById('stopScanBtn');
-            const switchBtn = document.getElementById('switchCameraBtn');
-            const videoElement = document.getElementById('videoElement');
-
-            startBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
-            switchBtn.style.display = 'none';
-            startBtn.disabled = false;
-            document.getElementById('scanSpinner').classList.add('d-none');
-            document.getElementById('scanBtnText').textContent = '开始扫描';
-
-            // 清空视频
-            videoElement.srcObject = null;
-            videoElement.pause();
-        }
-
-        // 切换摄像头
-        function switchCamera() {
-            currentCamera = currentCamera === 'environment' ? 'user' : 'environment';
-            stopScanner();
-            setTimeout(startScanner, 500);
-        }
-
-        // 扫描成功处理
-        function onScanSuccess(decodedText) {
-            const resultContent = document.getElementById('resultContent');
-            console.log('解析到的数据:', decodedText);
-
-            try {
-                const data = JSON.parse(decodedText);
-
-                resultContent.innerHTML = `
-                    <div class="alert alert-success">
-                        <h6>✅ 扫码成功！</h6>
-                        <div class="row mt-2">
-                            <div class="col-6">
-                                <p class="mb-1"><strong>ID：</strong>${data.id || 'N/A'}</p>
-                                <p class="mb-1"><strong>品类：</strong>${data.category || 'N/A'}</p>
-                                <p class="mb-1"><strong>类别：</strong>${data.type || 'N/A'}</p>
-                                <p class="mb-1"><strong>型号：</strong>${data.model || 'N/A'}</p>
-                                <p class="mb-1"><strong>封装：</strong>${data.package || 'N/A'}</p>
-                            </div>
-                            <div class="col-6">
-                                <p class="mb-1"><strong>数量：</strong>${data.quantity || 0} ${data.unit || ''}</p>
-                                <p class="mb-1"><strong>位置：</strong>${data.location || 'N/A'}</p>
-                                <p class="mb-1"><strong>单价：</strong>¥${parseFloat(data.price || 0).toFixed(2)}</p>
-                                <p class="mb-1"><strong>供应商：</strong>${data.supplier || 'N/A'}</p>
-                            </div>
-                        </div>
-                        <div class="d-grid gap-2 mt-3">
-                            <a href="/edit/${data.id}" class="btn btn-sm btn-primary" target="_blank">
-                                📝 查看详情
-                            </a>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="continueScanning()">继续扫描</button>
-                        </div>
-                    </div>
-                `;
-
-            } catch (e) {
-                console.error('二维码解析失败:', e);
-                resultContent.innerHTML = `
-                    <div class="alert alert-danger">
-                        <p><strong>❌ 二维码解析失败</strong></p>
-                        <p class="small mb-2">可能原因：非本工具生成的二维码或数据格式错误</p>
-                        <p class="small mb-2">原始数据：${decodedText.substring(0, 100)}${decodedText.length > 100 ? '...' : ''}</p>
-                        <button class="btn btn-sm btn-secondary" onclick="continueScanning()">重新扫描</button>
-                    </div>
-                `;
-            }
-        }
-
-        // 继续扫描
-        function continueScanning() {
-            const resultContent = document.getElementById('resultContent');
-            resultContent.innerHTML = '<div class="text-primary"><span class="spinner-border spinner-border-sm"></span> 重新开始扫描...</div>';
-
-            setTimeout(() => {
-                if (isScanning) {
-                    decodeContinuously();
-                }
-            }, 500);
-        }
-
-        // 从文件扫描二维码
-        async function scanQRCodeFromFile() {
-            const fileInput = document.getElementById('qrcodeFile');
-            const file = fileInput.files[0];
-            const resultContent = document.getElementById('resultContent');
-
-            if (!file) {
-                resultContent.innerHTML = `
-                    <div class="alert alert-warning">
-                        <p>❌ 请先选择二维码图片文件</p>
-                    </div>
-                `;
-                return;
-            }
-
-            // 显示加载状态
-            resultContent.innerHTML = `
-                <div class="text-center py-3">
-                    <div class="spinner-border spinner-border-sm text-primary"></div>
-                    <span class="ms-2">正在识别二维码...</span>
-                </div>
-            `;
-
-            try {
-                const codeReader = new ZXing.BrowserMultiFormatReader();
-                const img = new Image();
-
-                const result = await new Promise((resolve, reject) => {
-                    img.onload = function() {
-                        codeReader.decodeFromImage(img)
-                            .then(resolve)
-                            .catch(reject);
-                    };
-                    img.onerror = () => reject(new Error('图片加载失败'));
-                    img.src = URL.createObjectURL(file);
-                });
-
-                console.log('文件扫描成功:', result.text);
-                onScanSuccess(result.text);
-
-            } catch (err) {
-                console.error('二维码识别失败:', err);
-                resultContent.innerHTML = `
-                    <div class="alert alert-danger">
-                        <p>❌ 二维码识别失败</p>
-                        <p class="small mb-1">${err.message || '无法识别二维码内容'}</p>
-                        <button class="btn btn-sm btn-secondary" onclick="scanQRCodeFromFile()">重新尝试</button>
-                    </div>
-                `;
-            }
-        }
-
-        // 使用文件上传（备用方案）
-        function useFileUpload() {
-            const fileUploadArea = document.getElementById('fileUploadArea');
-            const qrcodeFile = document.getElementById('qrcodeFile');
-
-            // 高亮显示文件上传区域
-            fileUploadArea.style.border = '2px solid #0d6efd';
-            fileUploadArea.style.borderRadius = '8px';
-            fileUploadArea.style.padding = '15px';
-            fileUploadArea.style.transition = 'all 0.3s';
-
-            // 滚动到文件上传区域
-            fileUploadArea.scrollIntoView({ behavior: 'smooth' });
-
-            // 触发文件选择
-            qrcodeFile.click();
-        }
+        // 二维码扫码逻辑已移至后端及独立页面（/qrcode_tools），页面内的 modal 与摄像头脚本已删除以简化主页面。
 
         // 打印数据
         document.querySelector('form[action="{{url_for('export', kw=kw or '')}}"]').addEventListener('submit', async function(e) {
@@ -1916,6 +1925,132 @@ MAIN_TEMPLATE = '''
 '''
 
 # 编辑页面模板（修改：包含类别字段）
+# ------------------ AI 工具嵌入路由（将 AI_app 页面嵌入到主应用） ------------------
+@app.route('/ai_tools')
+def ai_tools():
+    try:
+        import AI_app as ai_app
+        return render_template_string(ai_app.HTML_TEMPLATE)
+    except Exception as e:
+        return f"无法加载 AI 工具：{e}", 500
+
+
+@app.route('/get_env_config')
+def get_env_config():
+    # 返回 AI 工具需要的 env 配置，供前端自动填充
+    try:
+        import AI_app as ai_app
+        from dotenv import dotenv_values, load_dotenv
+
+        load_dotenv(ai_app.Config.ENV_FILE)
+        env = dotenv_values(ai_app.Config.ENV_FILE)
+        config = {
+            'api_key': env.get('API_KEY') or ai_app.Config.API_KEY or '',
+            'api_url': env.get('API_URL') or ai_app.Config.API_URL or '',
+            'ai_model': env.get('AI_MODEL') or ai_app.Config.AI_MODEL or ''
+        }
+        return jsonify(success=True, config=config)
+    except Exception as e:
+        return jsonify(success=False, message=str(e))
+
+
+@app.route('/save_api_config', methods=['POST'])
+def save_api_config():
+    try:
+        import AI_app as ai_app
+        data = request.get_json() or {}
+        api_key = data.get('api_key', '')
+        api_url = data.get('api_url', '')
+        ai_model = data.get('ai_model', '')
+
+        ok = ai_app.Config.save_env(api_key, api_url, ai_model)
+        if ok:
+            return jsonify(success=True, message='保存成功')
+        else:
+            return jsonify(success=False, message='保存失败')
+    except Exception as e:
+        return jsonify(success=False, message=str(e))
+
+
+@app.route('/test_api', methods=['POST'])
+def test_api():
+    try:
+        data = request.get_json() or {}
+        api_key = data.get('api_key', '')
+        api_url = data.get('api_url', '')
+        ai_model = data.get('ai_model', 'gpt-3.5-turbo')
+
+        if not api_key or not api_url:
+            return jsonify(success=False, message='api_key 或 api_url 为空')
+
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'model': ai_model,
+            'messages': [{'role': 'user', 'content': '测试连接'}],
+            'temperature': 0
+        }
+
+        resp = requests.post(f"{api_url.rstrip('/')}/chat/completions", headers=headers, json=payload, timeout=10)
+        if resp.status_code in (200, 201):
+            return jsonify(success=True, message='连接成功')
+        else:
+            return jsonify(success=False, message=f'响应码 {resp.status_code}: {resp.text[:300]}')
+
+    except Exception as e:
+        return jsonify(success=False, message=str(e))
+
+
+# 代理 AI_app 的关键路由（使主应用可直接处理 AI 页面发起的 POST 请求）
+@app.route('/upload_images', methods=['POST'])
+def upload_images_proxy():
+    try:
+        import AI_app as ai
+        # 同步上传目录
+        ai.app.config['UPLOAD_FOLDER'] = app.config.get('UPLOAD_FOLDER', ai.app.config.get('UPLOAD_FOLDER', 'uploads'))
+        return ai.upload_images()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'代理 upload_images 失败: {e}'}), 500
+
+
+@app.route('/ai_parse', methods=['POST'])
+def ai_parse_proxy():
+    try:
+        import AI_app as ai
+        return ai.api_ai_parse()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'代理 ai_parse 失败: {e}'}), 500
+
+
+@app.route('/save_to_table', methods=['POST'])
+def save_to_table_proxy():
+    try:
+        import AI_app as ai
+        return ai.save_to_table()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'代理 save_to_table 失败: {e}'}), 500
+
+
+@app.route('/get_table_info')
+def get_table_info_proxy():
+    try:
+        import AI_app as ai
+        return ai.api_get_table_info()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'代理 get_table_info 失败: {e}'}), 500
+
+
+@app.route('/download_table')
+def download_table_proxy():
+    try:
+        import AI_app as ai
+        return ai.download_table()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'代理 download_table 失败: {e}'}), 500
+
+# -----------------------------------------------------------------------------
 EDIT_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -2007,7 +2142,7 @@ EDIT_TEMPLATE = '''
             </div>
         </form>
     </div>
-    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    </script>
 </body>
 </html>
 '''
@@ -2186,11 +2321,34 @@ BOM_TEMPLATE = '''
                     </table>
                 </div>
             </div>
-
+            
+           <!-- 智能匹配开关（新增） -->
+            <div class="mb-3 p-3 border rounded bg-light">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="autoMatchSwitch" checked>
+                    <label class="form-check-label" for="autoMatchSwitch">
+                        <strong>🔧 启用智能字段匹配</strong>
+                        <span class="text-muted small">（系统根据列名自动匹配字段，取消勾选可手动设置）</span>
+                    </label>
+                </div>
+                <div class="mt-2">
+                    <button type="button" class="btn btn-outline-info btn-sm me-2" onclick="applyAutoMapping()">
+                        <i class="bi bi-magic"></i> 应用智能匹配
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm me-2" onclick="resetToDefault()">
+                        <i class="bi bi-arrow-clockwise"></i> 重置为默认顺序
+                    </button>
+                    <button type="button" class="btn btn-outline-warning btn-sm" onclick="clearAllMapping()">
+                        <i class="bi bi-x-circle"></i> 清空所有映射
+                    </button>
+                    <span class="text-muted small ms-2">默认顺序：1.品类 2.型号 3.封装 4.数量 5.单位 6.单价 7.供应商...</span>
+                </div>
+            </div>
+            
             <div class="table-responsive mt-3">
                 <table class="table table-bordered mapping-table">
                     <thead class="table-dark">
-                        <tr><th>表格列</th><th>映射为工具字段</th><th>预览数据</th></tr>
+                        <tr><th width="15%">表格列</th><th width="25%">映射为工具字段</th><th width="15%">预览数据</th><th width="45%">智能匹配建议</th></tr>
                     </thead>
                     <tbody id="mappingTbody"></tbody>
                 </table>
@@ -2265,11 +2423,26 @@ BOM_TEMPLATE = '''
 
     <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
     <script>
-        let parseRes = {columns:[], preview:[], raw_data:[], error:'', row_count:0};
+        
+        let parseRes = {columns:[], preview:[], raw_data:[], default_mapping: {}, error:'', row_count:0};
+        // 在 parseRes 变量定义后添加（第4行）
+        const DEFAULT_COLUMN_ORDER = [
+            'category',      // 第1列：品类
+            'model',         // 第2列：型号规格
+            'package',       // 第3列：封装
+            'quantity',      // 第4列：数量
+            'unit',          // 第5列：单位
+            'price',         // 第6列：单价
+            'supplier',      // 第7列：供应商
+            'channel',       // 第8列：采购渠道
+            'location',      // 第9列：存放位置
+            'buy_time',      // 第10列：采购时间
+            'remark'         // 第11列：备注
+        ];
         let mapping = {};
         let dupData = [];
         let newData = [];
-
+        
         // 步骤切换
         function showStep(s, showLoading = false) {
             // 更新步骤指示器
@@ -2322,6 +2495,7 @@ BOM_TEMPLATE = '''
         }
 
         // 解析数据
+        // 第53行开始，修改 parseData 函数
         function parseData(type) {
             let formData = new FormData();
             formData.append('type', type);
@@ -2334,45 +2508,72 @@ BOM_TEMPLATE = '''
                 if (!file) {alert('请选择Excel文件！'); return;}
                 formData.append('excel_file', file);
             }
+            
+            // 显示加载中转
+            showStep(0, true);
+            
             fetch("{{url_for('parse_bom_data')}}", {method:'POST', body:formData})
             .then(res => res.json())
             .then(data => {
-                if (data.code !== 1) {alert(data.error); return;}
+                if (data.code !== 1) {
+                    alert(data.error); 
+                    showStep(1); // 返回步骤1
+                    return;
+                }
                 parseRes = data.data;
-                // 显示读取了多少行数据
-                alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据`);
+                
+                // 检查智能匹配开关状态
+                const autoMatchSwitch = document.getElementById('autoMatchSwitch');
+                if (autoMatchSwitch && autoMatchSwitch.checked) {
+                    // 自动应用智能匹配
+                    applyAutoMapping();
+                    alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据，已自动应用智能匹配`);
+                } else {
+                    alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据`);
+                }
+                
                 renderMapping();
                 showStep(2, true); // 显示加载中转后跳转到步骤2
                 initAutoClose();
-            }).catch(err => alert('解析失败：'+err.message));
+            }).catch(err => {
+                alert('解析失败：'+err.message);
+                showStep(1); // 返回步骤1
+            });
         }
 
         // 渲染映射表格和预览
         function renderMapping() {
             let tbody = document.getElementById('mappingTbody');
             tbody.innerHTML = '';
-            mapping = {};
             let fields = {{SYSTEM_FIELDS|tojson}};
-
+        
             // 更新数据统计
             document.getElementById('rowCount').innerText = parseRes.row_count;
             document.getElementById('colCount').innerText = parseRes.columns.length;
-
+        
             // 渲染预览表格
             renderPreview();
-
+        
             // 渲染映射表格
-            parseRes.columns.forEach(col => {
-                mapping[col] = '';
+            parseRes.columns.forEach((col, colIdx) => {
+                // 如果映射字典中没有该列，设置为空
+                if (typeof mapping[col] === 'undefined') {
+                    mapping[col] = '';
+                }
+                
                 let tr = document.createElement('tr');
+                
                 // 表格列
                 let td1 = document.createElement('td');
-                td1.innerText = col;
+                td1.innerHTML = `<strong>${col}</strong><br><span class="text-muted small">列${colIdx + 1}</span>`;
                 tr.appendChild(td1);
+                
                 // 下拉框
                 let td2 = document.createElement('td');
                 let select = document.createElement('select');
                 select.className = 'form-select form-select-sm';
+                select.dataset.column = col;
+                
                 fields.forEach(f => {
                     let opt = document.createElement('option');
                     opt.value = f[0];
@@ -2381,20 +2582,191 @@ BOM_TEMPLATE = '''
                         opt.style.color = 'red';
                         opt.style.fontWeight = 'bold';
                     }
+                    if (f[0] === mapping[col]) {
+                        opt.selected = true;
+                    }
                     select.appendChild(opt);
                 });
+                
                 select.onchange = function() {mapping[col] = this.value;};
                 td2.appendChild(select);
                 tr.appendChild(td2);
-                // 预览
+                
+                // 预览数据
                 let td3 = document.createElement('td');
-                let val = parseRes.preview.length > 0 ? parseRes.preview[0][parseRes.columns.indexOf(col)] : '';
-                td3.innerText = val || '无';
+                let previewVal = '无';
+                if (parseRes.preview.length > 0 && colIdx < parseRes.preview[0].length) {
+                    previewVal = parseRes.preview[0][colIdx];
+                    if (previewVal && previewVal.length > 20) {
+                        previewVal = previewVal.substring(0, 20) + '...';
+                    }
+                }
+                td3.innerHTML = `<span class="text-truncate">${previewVal}</span>`;
                 tr.appendChild(td3);
+                
+                // 智能匹配建议（新增列）
+                let td4 = document.createElement('td');
+                let smartSuggest = parseRes.default_mapping[col] || '';
+                let suggestHtml = '';
+                
+                if (smartSuggest) {
+                    let fieldName = '';
+                    for (let f of fields) {
+                        if (f[0] === smartSuggest) {
+                            fieldName = f[1];
+                            break;
+                        }
+                    }
+                    suggestHtml = `
+                        <div class="d-flex align-items-center">
+                            <span class="badge bg-info me-2">建议</span>
+                            <span class="me-2">${fieldName}</span>
+                            <button class="btn btn-sm btn-outline-primary py-0" onclick="applyColumnMapping('${col}', '${smartSuggest}')">
+                                采用
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    suggestHtml = '<span class="text-muted small">无匹配建议</span>';
+                }
+                
+                td4.innerHTML = suggestHtml;
+                tr.appendChild(td4);
+                
                 tbody.appendChild(tr);
             });
+            
+            // 检查必填字段
+            checkRequiredFields();
         }
 
+        // 应用智能匹配
+        function applyAutoMapping() {
+            if (!parseRes.default_mapping || Object.keys(parseRes.default_mapping).length === 0) {
+                alert('没有可用的智能匹配建议，请使用默认顺序映射');
+                resetToDefault();
+                return;
+            }
+            
+            // 应用智能匹配建议
+            parseRes.columns.forEach(col => {
+                if (parseRes.default_mapping[col]) {
+                    mapping[col] = parseRes.default_mapping[col];
+                    
+                    // 更新下拉框
+                    let select = document.querySelector(`select[data-column="${col}"]`);
+                    if (select) {
+                        select.value = parseRes.default_mapping[col];
+                    }
+                }
+            });
+            
+            alert('✅ 已应用智能匹配！请检查必填字段是否正确映射');
+            checkRequiredFields();
+        }
+        
+        // 重置为默认顺序
+        function resetToDefault() {
+            parseRes.columns.forEach((col, idx) => {
+                let defaultField = '';
+                if (idx < DEFAULT_COLUMN_ORDER.length) {
+                    defaultField = DEFAULT_COLUMN_ORDER[idx];
+                }
+                mapping[col] = defaultField;
+                
+                // 更新下拉框
+                let select = document.querySelector(`select[data-column="${col}"]`);
+                if (select) {
+                    select.value = defaultField;
+                }
+            });
+            
+            alert('🔄 已重置为默认顺序映射');
+            checkRequiredFields();
+        }
+        
+        // 清空所有映射
+        function clearAllMapping() {
+            parseRes.columns.forEach(col => {
+                mapping[col] = '';
+                
+                // 更新下拉框
+                let select = document.querySelector(`select[data-column="${col}"]`);
+                if (select) {
+                    select.value = '';
+                }
+            });
+            
+            alert('🗑️ 已清空所有映射，请手动设置');
+            checkRequiredFields();
+        }
+        
+        // 应用单列映射
+        function applyColumnMapping(column, field) {
+            mapping[column] = field;
+            
+            // 更新下拉框
+            let select = document.querySelector(`select[data-column="${column}"]`);
+            if (select) {
+                select.value = field;
+            }
+            
+            // 更新按钮状态
+            let button = event.target;
+            button.innerHTML = '✓ 已采用';
+            button.classList.remove('btn-outline-primary');
+            button.classList.add('btn-success');
+            button.disabled = true;
+        }
+        
+        // 检查必填字段
+        function checkRequiredFields() {
+            const requiredFields = ['category', 'model', 'package'];
+            const mappedFields = Object.values(mapping);
+            
+            let missingFields = [];
+            requiredFields.forEach(field => {
+                if (!mappedFields.includes(field)) {
+                    let fieldName = '';
+                    switch(field) {
+                        case 'category': fieldName = '品类'; break;
+                        case 'model': fieldName = '型号规格'; break;
+                        case 'package': fieldName = '封装'; break;
+                    }
+                    missingFields.push(fieldName);
+                }
+            });
+            
+            if (missingFields.length > 0) {
+                // 显示警告
+                const warningDiv = document.getElementById('missingFieldsWarning');
+                if (!warningDiv) {
+                    let warning = document.createElement('div');
+                    warning.id = 'missingFieldsWarning';
+                    warning.className = 'alert alert-warning mt-3';
+                    warning.innerHTML = `
+                        <strong>⚠️ 缺少必填字段映射：${missingFields.join('、')}</strong>
+                        <p class="mb-0 small">请确保以下字段已正确映射：<br>
+                        • <strong>品类</strong> (第1列)<br>
+                        • <strong>型号规格</strong> (第2列)<br>
+                        • <strong>封装</strong> (第3列)</p>
+                    `;
+                    
+                    // 插入到映射表格前
+                    const table = document.querySelector('.table-responsive');
+                    if (table && table.parentNode) {
+                        table.parentNode.insertBefore(warning, table);
+                    }
+                }
+            } else {
+                // 移除警告
+                const warningDiv = document.getElementById('missingFieldsWarning');
+                if (warningDiv) {
+                    warningDiv.remove();
+                }
+            }
+        }
+        
         // 渲染预览表格
         function renderPreview() {
             const previewHeader = document.getElementById('previewHeader');
@@ -2426,7 +2798,23 @@ BOM_TEMPLATE = '''
         }
 
         // 检测重复数据
+        // 第122行开始，修改 checkDuplicate 函数
         function checkDuplicate() {
+            // 检查必填字段
+            const requiredFields = ['category', 'model', 'package'];
+            const mappedFields = Object.values(mapping);
+            let missingFields = [];
+            requiredFields.forEach(field => {
+                if (!mappedFields.includes(field)) {
+                    missingFields.push(field);
+                }
+            });
+            
+            if (missingFields.length > 0) {
+                alert(`请先映射必填字段：${missingFields.join('、')}`);
+                return;
+            }
+        
             // 获取批量值
             let batchVals = {
                 quantity: document.getElementById('batch_quantity').value.trim() || '0',
@@ -2448,7 +2836,11 @@ BOM_TEMPLATE = '''
             fetch("{{url_for('check_bom_dup')}}", {method:'POST', body:formData})
             .then(res => res.json())
             .then(data => {
-                if (data.code !== 1) {alert(data.error); return;}
+                if (data.code !== 1) {
+                    alert(data.error); 
+                    showStep(2); // 返回步骤2
+                    return;
+                }
                 dupData = data.data.duplicate || [];
                 newData = data.data.unique || [];
                 renderDup();
@@ -2543,18 +2935,14 @@ BOM_TEMPLATE = '''
         }
 
         // 页面加载时初始化
+        // 第197行开始，修改 window.onload 函数
         window.onload = function() {
             initAutoClose();
-            updateSelect();
-            document.querySelectorAll('.compCheck').forEach(c => {
-                c.addEventListener('change', updateSelect);
-            });
-            // ===== 新增：搜索后聚焦输入框，光标定位到内容末尾 =====
-            const searchInput = document.getElementById('searchInput');
-            if (searchInput) {
-                searchInput.focus();
-                const len = searchInput.value.length;
-                searchInput.setSelectionRange(len, len);
+            // 初始化智能匹配开关
+            const autoMatchSwitch = document.getElementById('autoMatchSwitch');
+            if (autoMatchSwitch) {
+                // 默认选中
+                autoMatchSwitch.checked = true;
             }
         };
     </script>
@@ -2892,6 +3280,30 @@ def batch_generate_qrcodes():
 
 
 # 导出/打印（修改：新增类别字段导出）
+@app.route('/get_export_files')
+def get_export_files():
+    """获取exports文件夹中的所有xlsx文件"""
+    try:
+        files = []
+        if os.path.exists(EXPORTS_FOLDER):
+            for filename in os.listdir(EXPORTS_FOLDER):
+                if filename.endswith('.xlsx'):
+                    filepath = os.path.join(EXPORTS_FOLDER, filename)
+                    mtime = os.path.getmtime(filepath)
+                    mtime_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+                    files.append({
+                        'name': filename[:-5],  # 去掉.xlsx
+                        'path': filename,
+                        'time': mtime_str
+                    })
+            # 按修改时间倒序
+            files.sort(key=lambda x: x['time'], reverse=True)
+        return jsonify({'files': files[:20]})  # 最多返回20个
+    except Exception as e:
+        logger.error(f"获取导出文件列表失败: {str(e)}")
+        return jsonify({'files': []})
+
+
 @app.route('/export', methods=['POST'])
 def export():
     kw = request.args.get('kw', '').strip()
@@ -2900,6 +3312,10 @@ def export():
     fmt = request.form.get('format', 'xlsx')
     export_qrcode = request.form.get('export_qrcode') == '1'
     export_img = request.form.get('export_img') == '1'
+    filename_mode = request.form.get('filename_mode', 'default')
+    custom_filename = request.form.get('custom_filename', '').strip()
+    export_mode = request.form.get('export_mode', 'new')
+    append_file = request.form.get('append_file', '').strip()
 
     if not ids or not fields:
         flash("请选择元器件和导出字段！", "danger")
@@ -2974,7 +3390,7 @@ def export():
             flash(f"打包导出失败：{str(e)}", "danger")
             return redirect(url_for('index', kw=kw))
 
-    # 普通Excel/CSV导出
+    # 普通Excel/CSV导出（新增：支持自定义文件名和追加）
     field_cn = {
         'category': '品类', 'type': '类别', 'model': '型号规格', 'package': '封装', 'supplier': '供应商',
         'quantity': '数量', 'unit': '单位', 'location': '存放位置', 'price': '采购单价(¥)',
@@ -2990,16 +3406,48 @@ def export():
             row[field_cn[f]] = val
         data.append(row)
     df = pd.DataFrame(data)
+    
+    # 生成文件名
+    if filename_mode == 'custom' and custom_filename:
+        filename = custom_filename.replace('.xlsx', '').replace('.csv', '')
+    else:
+        filename = f"元器件库存_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    
+    # 处理追加模式
+    if export_mode == 'append' and append_file and fmt == 'xlsx':
+        try:
+            append_path = os.path.join(EXPORTS_FOLDER, append_file)
+            if os.path.exists(append_path):
+                # 读取现有文件
+                existing_df = pd.read_excel(append_path, engine='openpyxl')
+                # 合并数据
+                df = pd.concat([existing_df, df], ignore_index=True)
+                logger.info(f"追加导出：将{len(data)}行数据追加到{append_file}")
+            else:
+                logger.warning(f"目标文件不存在：{append_path}")
+        except Exception as e:
+            logger.warning(f"追加数据失败，将创建新文件：{str(e)}")
+            export_mode = 'new'
+    
+    # 确保导出文件夹存在
+    os.makedirs(EXPORTS_FOLDER, exist_ok=True)
+    
+    # 导出到文件
     output = BytesIO()
-    filename = f"元器件库存_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    filepath = None
     if fmt == 'xlsx':
         df.to_excel(output, index=False, engine='openpyxl')
         mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         filename += '.xlsx'
+        filepath = os.path.join(EXPORTS_FOLDER, filename)
+        # 保存到exports文件夹
+        df.to_excel(filepath, index=False, engine='openpyxl')
+        flash(f"✓ Excel导出成功！文件已保存到 exports/{filename}", "success")
     else:
         df.to_csv(output, index=False, encoding='utf-8-sig')
         mimetype = 'text/csv'
         filename += '.csv'
+    
     output.seek(0)
     return send_file(output, mimetype=mimetype, as_attachment=True, download_name=filename)
 
@@ -3126,7 +3574,7 @@ def parse_bom_data():
         if not source_type in ['paste', 'excel']:
             return jsonify({'code': 0, 'error': '无效的导入类型'})
         source = request.form.get('paste_data', '') if source_type == 'paste' else request.files.get('excel_file')
-        columns, preview, raw_data, error, row_count = parse_table_data(source, source_type)
+        columns, preview, raw_data, default_mapping, error, row_count = parse_table_data(source, source_type)
         if error:
             return jsonify({'code': 0, 'error': error})
         return jsonify({
@@ -3135,14 +3583,13 @@ def parse_bom_data():
                 'columns': columns,
                 'preview': preview,
                 'raw_data': raw_data,
+                'default_mapping': default_mapping,  # 新增智能匹配结果
                 'row_count': row_count
             }
         })
     except Exception as e:
         logger.error(f"BOM解析异常：{str(e)}")
         return jsonify({'code': 0, 'error': f"解析异常：{str(e)}"})
-
-
 # BOM重复检测接口
 @app.route('/check_bom_dup', methods=['POST'])
 def check_bom_dup():
@@ -3406,71 +3853,195 @@ def do_bom_import():
         return render_template_string(BOM_TEMPLATE, import_res=None)
 
 
-# 扫码读取接口
+# 扫码读取接口（直接在 stock_manage 中处理，避免 app context 问题）
+# 扫码读取接口（修复导入错误，直接调用本地工具函数）
 @app.route('/scan_qrcode', methods=['POST'])
 def scan_qrcode():
     try:
-        data = request.get_json()
-        qr_data = data.get('data', '')
-
+        # 提取二维码数据（调用本地工具函数，无需导入qrcode_tools）
+        raw_data, error_resp = extract_qrcode_data(request)
+        if error_resp:
+            return error_resp
+        
         # 解析二维码数据
-        try:
-            comp_data = json.loads(qr_data)
-            comp_id = comp_data.get('id')
-
-            if comp_id:
-                comp = Component.query.get(comp_id)
-                if comp:
-                    return jsonify({
-                        'code': 1,
-                        'data': {
-                            'id': comp.id,
-                            'category': comp.category,
-                            'type': comp.type,
-                            'model': comp.model,
-                            'package': comp.package,
-                            'supplier': comp.supplier,
-                            'quantity': comp.quantity,
-                            'unit': comp.unit,
-                            'location': comp.location,
-                            'price': comp.price,
-                            'buy_time': comp.buy_time,
-                            'channel': comp.channel,
-                            'remark': comp.remark,
-                            'img_path': comp.img_path,
-                            'qrcode_path': comp.qrcode_path
-                        }
-                    })
-
-            return jsonify({'code': 0, 'error': '未找到对应的元器件'})
-        except json.JSONDecodeError:
-            # 如果不是JSON，尝试按ID直接查找
-            if qr_data.isdigit():
-                comp = Component.query.get(int(qr_data))
-                if comp:
-                    return jsonify({
-                        'code': 1,
-                        'data': {
-                            'id': comp.id,
-                            'category': comp.category,
-                            'type': comp.type,
-                            'model': comp.model,
-                            'package': comp.package,
-                            'supplier': comp.supplier,
-                            'quantity': comp.quantity,
-                            'unit': comp.unit,
-                            'location': comp.location,
-                            'price': comp.price,
-                            'buy_time': comp.buy_time,
-                            'channel': comp.channel,
-                            'remark': comp.remark
-                        }
-                    })
-
-            return jsonify({'code': 0, 'error': '无效的二维码数据'})
+        comp_id, comp_obj = parse_qrcode_data(raw_data)
+        
+        # 根据ID查询元器件
+        if comp_id:
+            comp = Component.query.get(int(comp_id))
+            if comp:
+                return jsonify({
+                    'code': 1,
+                    'data': {
+                        'id': comp.id,
+                        'category': comp.category,
+                        'type': comp.type,
+                        'model': comp.model,
+                        'package': comp.package,
+                        'supplier': comp.supplier,
+                        'quantity': comp.quantity,
+                        'unit': comp.unit,
+                        'location': comp.location,
+                        'price': comp.price,
+                        'buy_time': comp.buy_time,
+                        'channel': comp.channel,
+                        'remark': comp.remark,
+                        'img_path': comp.img_path,
+                        'qrcode_path': comp.qrcode_path
+                    }
+                })
+        
+        # 无ID但有JSON对象，直接返回
+        if comp_obj:
+            return jsonify({'code': 1, 'data': comp_obj})
+        
+        # 未找到元器件
+        return jsonify({'code': 0, 'error': '未找到对应的元器件'}), 404
+        
     except Exception as e:
-        logger.error(f"扫码读取失败：{str(e)}")
-        return jsonify({'code': 0, 'error': f'扫码读取失败：{str(e)}'})
+        logger.error(f"扫码查询失败：{str(e)}", exc_info=True)
+        return jsonify({'code': 0, 'error': f'扫码失败：{str(e)}'}), 500
+    try:
+        import qrcode_tools as qt
+        
+        # 提取并验证二维码数据
+        raw_data, error_resp = qt.extract_qrcode_data(request)
+        if error_resp:
+            return error_resp
+        
+        # 解析二维码数据（纯数据处理，无数据库操作）
+        comp_id, comp_obj = qt.parse_qrcode_data(raw_data)
+        
+        # 若解析到 id，从数据库查询元器件
+        if comp_id:
+            comp = Component.query.get(int(comp_id))
+            if comp:
+                return jsonify({
+                    'code': 1,
+                    'data': {
+                        'id': comp.id,
+                        'category': getattr(comp, 'category', ''),
+                        'type': getattr(comp, 'type', ''),
+                        'model': getattr(comp, 'model', ''),
+                        'package': getattr(comp, 'package', ''),
+                        'supplier': getattr(comp, 'supplier', ''),
+                        'quantity': getattr(comp, 'quantity', 0),
+                        'unit': getattr(comp, 'unit', ''),
+                        'location': getattr(comp, 'location', ''),
+                        'price': getattr(comp, 'price', ''),
+                        'buy_time': getattr(comp, 'buy_time', ''),
+                        'channel': getattr(comp, 'channel', ''),
+                        'remark': getattr(comp, 'remark', ''),
+                        'img_path': getattr(comp, 'img_path', ''),
+                        'qrcode_path': getattr(comp, 'qrcode_path', '')
+                    }
+                })
+        
+        # 若无 id 但有 JSON 对象，返回该对象
+        if comp_obj:
+            return jsonify({'code': 1, 'data': comp_obj})
+        
+        # 都没有则返回错误
+        return jsonify({'code': 0, 'error': '未找到对应的元器件或二维码数据格式不支持'}), 404
+        
+    except Exception as e:
+        logger.error(f"扫码读取失败：{str(e)}", exc_info=True)
+        return jsonify({'code': 0, 'error': f'扫码读取失败：{str(e)}'}), 500
+
+
+# 独立扫码管理页面（便于单独打开调试）
+@app.route('/qrcode_tools')
+def qrcode_tools_page():
+    try:
+        import qrcode_tools as qt
+        return render_template_string(qt.HTML_TEMPLATE)
+    except Exception as e:
+        logger.error(f"加载扫码管理页面失败: {e}", exc_info=True)
+        return f"无法加载 扫码管理工具：{e}", 500
+
+
+# 后端图片二维码识别接口（当客户端识别失败时回退）
+@app.route('/scan_qrcode_from_image', methods=['POST'])
+def scan_qrcode_from_image():
+    """上传图片到后端进行二维码识别"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'code': 0, 'error': '未上传图片文件'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'code': 0, 'error': '文件名为空'}), 400
+        
+        # 尝试用 pyzbar 识别
+        try:
+            from pyzbar.pyzbar import decode
+            from PIL import Image
+            import io
+            
+            # 读取图片 - 重要：将文件流读入内存后重新定位
+            file_data = file.read()
+            file.seek(0)  # 重置文件流指针
+            img = Image.open(io.BytesIO(file_data))
+            
+            # 确保图片格式支持（转换为RGB）
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            logger.debug(f"正在识别图片：{file.filename}，格式：{img.format}，大小：{img.size}")
+            
+            # 识别二维码
+            decoded_objects = decode(img)
+            
+            if not decoded_objects:
+                logger.warning(f"未在图片中找到二维码：{file.filename}")
+                return jsonify({'code': 0, 'error': '后端识别失败：未找到二维码'}), 404
+            
+            # 获取第一个识别到的二维码内容
+            qrcode_data = decoded_objects[0].data.decode('utf-8')
+            logger.info(f"✓ 后端识别成功：{qrcode_data[:50]}...")
+            
+            # 将识别到的数据进行后续处理（与 /scan_qrcode 相同逻辑）
+            import qrcode_tools as qt
+            comp_id, comp_obj = qt.parse_qrcode_data(qrcode_data)
+            
+            if comp_id:
+                comp = Component.query.get(int(comp_id))
+                if comp:
+                    return jsonify({
+                        'code': 1,
+                        'data': {
+                            'id': comp.id,
+                            'category': getattr(comp, 'category', ''),
+                            'type': getattr(comp, 'type', ''),
+                            'model': getattr(comp, 'model', ''),
+                            'package': getattr(comp, 'package', ''),
+                            'supplier': getattr(comp, 'supplier', ''),
+                            'quantity': getattr(comp, 'quantity', 0),
+                            'unit': getattr(comp, 'unit', ''),
+                            'location': getattr(comp, 'location', ''),
+                            'price': getattr(comp, 'price', ''),
+                            'buy_time': getattr(comp, 'buy_time', ''),
+                            'channel': getattr(comp, 'channel', ''),
+                            'remark': getattr(comp, 'remark', ''),
+                            'img_path': getattr(comp, 'img_path', ''),
+                            'qrcode_path': getattr(comp, 'qrcode_path', '')
+                        }
+                    })
+            
+            if comp_obj:
+                return jsonify({'code': 1, 'data': comp_obj})
+            
+            return jsonify({'code': 0, 'error': '未找到对应的元器件'}), 404
+            
+        except ImportError:
+            return jsonify({'code': 0, 'error': '后端库未安装，请运行 pip install pyzbar'}), 500
+        except Exception as e:
+            logger.error(f"后端二维码识别失败: {str(e)}", exc_info=True)
+            return jsonify({'code': 0, 'error': f'后端识别失败：{str(e)}'}), 500
+            
+    except Exception as e:
+        logger.error(f"处理图片上传失败: {str(e)}", exc_info=True)
+        return jsonify({'code': 0, 'error': f'处理失败：{str(e)}'}), 500
 
 
 # 静态文件访问（修复跨磁盘路径问题）

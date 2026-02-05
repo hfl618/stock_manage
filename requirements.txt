@@ -9,3 +9,5 @@ pillow==10.0.0
 openpyxl==3.1.2
 pywin32==306
 pyinstaller==5.13.0
+pyzbar==0.1.9
+python-dotenv==1.0.0
