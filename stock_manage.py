@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # -------------------------- 导入依赖（新增二维码和图片处理包） --------------------------
-
+import re
 import socket
 import sys
 import os
@@ -589,6 +589,37 @@ SYSTEM_FIELDS = [
 ]
 REQUIRED_FIELDS = ['category', 'model', 'package']
 
+# 智能匹配关键词映射（新增）
+COLUMN_KEYWORDS = {
+    'category': ['品名', '名称', '物料名称', '元件名称', '元器件名称', '产品名称', 'item name', 'product name', 'component name', 'name', 'Name'],
+    'type': ['分类', '类别', '类型', '大类', 'category', 'type', 'class', '分类名称', '类型分类', 'cate', '物料分类', '分类名称','子类', '细分', '二级类', 'subtype', 'sub_type', 'sub category', '子类型', '二级分类'],
+    'model': ['型号', '规格', '料号', '物料号', '编码', 'code', 'model', 'part', 'part no', '型号规格', 'part number', '物料编码'],
+    'package': ['封装', '包装', '封装形式', 'package', '封装类型', 'footprint', '封装规格'],
+    'quantity': ['数量', '个数', 'quantity', 'qty', '数量(pcs)', 'pcs', 'qty.', 'qnty', '需求数量'],
+    'unit': ['单位', 'unit', '计量单位', 'uom', 'unit of measure'],
+    'price': ['单价', '价格', '采购价', 'price', 'cost', '单价(元)', '单价(￥)', 'unit price', '单价(USD)'],
+    'supplier': ['供应商', '厂家', '品牌', '厂商', 'supplier', 'vendor', 'manufacturer', '制造商'],
+    'channel': ['渠道', '采购渠道', '来源', 'channel', 'source', '采购来源'],
+    'remark': ['备注', '说明', '描述', 'remark', 'description', 'note', 'comments'],
+    'location': ['位置', '存放位置', '库位', '仓位', 'location', 'storage', '存储位置'],
+    'buy_time': ['采购时间', '购买时间', '日期', 'buy_time', 'date', '采购日期', '购买日期', '日期时间']
+}
+
+# 默认列顺序（当无法智能匹配时使用）
+DEFAULT_COLUMN_ORDER = [
+    'category',      # 第1列：品类
+    'model',         # 第2列：型号规格
+    'package',       # 第3列：封装
+    'quantity',      # 第4列：数量
+    'unit',          # 第5列：单位
+    'price',         # 第6列：单价
+    'supplier',      # 第7列：供应商
+    'channel',       # 第8列：采购渠道
+    'location',      # 第9列：存放位置
+    'buy_time',      # 第10列：采购时间
+    'remark'         # 第11列：备注
+]
+
 
 def parse_table_data(source, source_type):
     """解析粘贴/Excel数据 - 修复数值类型处理"""
@@ -597,7 +628,7 @@ def parse_table_data(source, source_type):
         if source_type == 'paste':
             lines = [l.strip() for l in source.split('\n') if l.strip()]
             if not lines:
-                return columns, preview, raw_data, "无有效粘贴数据", 0
+                return columns, preview, raw_data, [], "无有效粘贴数据", 0
             # 按制表符分割
             col_num = len(lines[0].split('\t'))
             columns = [f'列{i + 1}' for i in range(col_num)]
@@ -609,7 +640,7 @@ def parse_table_data(source, source_type):
 
         elif source_type == 'excel':
             if not allowed_file(source.filename, {'xlsx'}):
-                return columns, preview, raw_data, "仅支持xlsx格式Excel文件", 0
+                return columns, preview, raw_data, [], "仅支持xlsx格式Excel文件", 0
 
             # 使用pandas读取，但保持原始数据类型
             import pandas as pd
@@ -634,12 +665,119 @@ def parse_table_data(source, source_type):
 
             row_count = len(raw_data)
 
-        return columns, preview, raw_data, "", row_count
+        # 智能匹配列名（新增）
+        default_mapping = smart_column_matching(columns, preview)
+
+        return columns, preview, raw_data, default_mapping, "", row_count
 
     except Exception as e:
         logger.error(f"表格解析失败：{str(e)}", exc_info=True)
-        return columns, preview, raw_data, f"解析失败：{str(e)}", 0
+        return columns, preview, raw_data, [], f"解析失败：{str(e)}", 0
 
+
+
+
+
+def smart_column_matching(columns, preview_data=None):
+    """
+    智能匹配列名，返回默认映射字典
+    columns: 列名列表
+    preview_data: 预览数据，用于分析数据类型
+    返回: {列名: 系统字段} 的字典
+    """
+    mapping = {}
+    matched_fields = set()  # 已匹配的字段
+
+    # 阶段1：基于列名关键词匹配（高优先级）
+    for col_idx, col_name in enumerate(columns):
+        col_name_lower = str(col_name).lower().strip()
+        col_name_original = str(col_name).strip()
+
+        # 跳过空列名
+        if not col_name_lower or col_name_lower == 'nan':
+            mapping[col_name_original] = ''
+            continue
+
+        # 遍历关键词映射
+        matched = False
+        for field, keywords in COLUMN_KEYWORDS.items():
+            if field in matched_fields:
+                continue  # 该字段已匹配，跳过
+
+            for keyword in keywords:
+                # 检查关键词是否出现在列名中
+                if keyword.lower() in col_name_lower:
+                    mapping[col_name_original] = field
+                    matched_fields.add(field)
+                    matched = True
+                    break
+            if matched:
+                break
+
+        if not matched:
+            mapping[col_name_original] = ''
+
+    # 阶段2：如果前3列没有匹配到必填字段，使用默认顺序
+    required_not_matched = [f for f in REQUIRED_FIELDS if f not in matched_fields]
+
+    if required_not_matched and len(columns) >= len(REQUIRED_FIELDS):
+        # 按默认顺序尝试匹配前几列
+        for i, col_name in enumerate(columns[:len(DEFAULT_COLUMN_ORDER)]):
+            if i < len(DEFAULT_COLUMN_ORDER):
+                field = DEFAULT_COLUMN_ORDER[i]
+                # 如果该字段还未匹配，且当前列也未匹配
+                if field in required_not_matched and mapping.get(str(col_name).strip()) == '':
+                    mapping[str(col_name).strip()] = field
+                    matched_fields.add(field)
+                    if field in required_not_matched:
+                        required_not_matched.remove(field)
+
+    # 阶段3：如果还有必填字段未匹配，强制使用前几列
+    if required_not_matched:
+        # 按顺序将必填字段分配给未匹配的列
+        available_cols = [col for col in columns if mapping.get(str(col).strip()) == '']
+        for i, field in enumerate(required_not_matched):
+            if i < len(available_cols):
+                mapping[str(available_cols[i]).strip()] = field
+                matched_fields.add(field)
+
+    # 阶段4：基于预览数据分析类型匹配（如果提供了预览数据）
+    if preview_data and len(preview_data) > 0:
+        for col_idx, col_name in enumerate(columns):
+            current_field = mapping.get(str(col_name).strip())
+            if current_field == '' and col_idx < len(preview_data[0]):
+                # 获取预览数据
+                sample_values = [row[col_idx] for row in preview_data[:3] if col_idx < len(row)]
+
+                # 尝试根据数据类型猜测字段
+                for val in sample_values:
+                    val_str = str(val).strip()
+
+                    # 检查是否为数量（数字）
+                    if any(char.isdigit() for char in val_str) and 'quantity' not in matched_fields:
+                        try:
+                            float_val = float(val_str.replace(',', ''))
+                            if 0 <= float_val <= 1000000:  # 合理数量范围
+                                mapping[str(col_name).strip()] = 'quantity'
+                                matched_fields.add('quantity')
+                                break
+                        except:
+                            pass
+
+                    # 检查是否为价格（带货币符号或小数点）
+                    elif ('¥' in val_str or '￥' in val_str or '$' in val_str or
+                          ('.' in val_str and len(val_str.split('.')[-1]) == 2)) and 'price' not in matched_fields:
+                        mapping[str(col_name).strip()] = 'price'
+                        matched_fields.add('price')
+                        break
+
+                    # 检查是否为日期
+                    elif re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', val_str) and 'buy_time' not in matched_fields:
+                        mapping[str(col_name).strip()] = 'buy_time'
+                        matched_fields.add('buy_time')
+                        break
+
+    return mapping
 
 def map_table_data(raw_data, columns, mapping, batch_vals):
     """映射表格数据为字典列表 - 修复数量处理"""
@@ -2007,7 +2145,7 @@ EDIT_TEMPLATE = '''
             </div>
         </form>
     </div>
-    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    </script>
 </body>
 </html>
 '''
@@ -2186,11 +2324,34 @@ BOM_TEMPLATE = '''
                     </table>
                 </div>
             </div>
-
+            
+           <!-- 智能匹配开关（新增） -->
+            <div class="mb-3 p-3 border rounded bg-light">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="autoMatchSwitch" checked>
+                    <label class="form-check-label" for="autoMatchSwitch">
+                        <strong>🔧 启用智能字段匹配</strong>
+                        <span class="text-muted small">（系统根据列名自动匹配字段，取消勾选可手动设置）</span>
+                    </label>
+                </div>
+                <div class="mt-2">
+                    <button type="button" class="btn btn-outline-info btn-sm me-2" onclick="applyAutoMapping()">
+                        <i class="bi bi-magic"></i> 应用智能匹配
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm me-2" onclick="resetToDefault()">
+                        <i class="bi bi-arrow-clockwise"></i> 重置为默认顺序
+                    </button>
+                    <button type="button" class="btn btn-outline-warning btn-sm" onclick="clearAllMapping()">
+                        <i class="bi bi-x-circle"></i> 清空所有映射
+                    </button>
+                    <span class="text-muted small ms-2">默认顺序：1.品类 2.型号 3.封装 4.数量 5.单位 6.单价 7.供应商...</span>
+                </div>
+            </div>
+            
             <div class="table-responsive mt-3">
                 <table class="table table-bordered mapping-table">
                     <thead class="table-dark">
-                        <tr><th>表格列</th><th>映射为工具字段</th><th>预览数据</th></tr>
+                        <tr><th width="15%">表格列</th><th width="25%">映射为工具字段</th><th width="15%">预览数据</th><th width="45%">智能匹配建议</th></tr>
                     </thead>
                     <tbody id="mappingTbody"></tbody>
                 </table>
@@ -2265,11 +2426,26 @@ BOM_TEMPLATE = '''
 
     <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
     <script>
-        let parseRes = {columns:[], preview:[], raw_data:[], error:'', row_count:0};
+        
+        let parseRes = {columns:[], preview:[], raw_data:[], default_mapping: {}, error:'', row_count:0};
+        // 在 parseRes 变量定义后添加（第4行）
+        const DEFAULT_COLUMN_ORDER = [
+            'category',      // 第1列：品类
+            'model',         // 第2列：型号规格
+            'package',       // 第3列：封装
+            'quantity',      // 第4列：数量
+            'unit',          // 第5列：单位
+            'price',         // 第6列：单价
+            'supplier',      // 第7列：供应商
+            'channel',       // 第8列：采购渠道
+            'location',      // 第9列：存放位置
+            'buy_time',      // 第10列：采购时间
+            'remark'         // 第11列：备注
+        ];
         let mapping = {};
         let dupData = [];
         let newData = [];
-
+        
         // 步骤切换
         function showStep(s, showLoading = false) {
             // 更新步骤指示器
@@ -2322,6 +2498,7 @@ BOM_TEMPLATE = '''
         }
 
         // 解析数据
+        // 第53行开始，修改 parseData 函数
         function parseData(type) {
             let formData = new FormData();
             formData.append('type', type);
@@ -2334,45 +2511,72 @@ BOM_TEMPLATE = '''
                 if (!file) {alert('请选择Excel文件！'); return;}
                 formData.append('excel_file', file);
             }
+            
+            // 显示加载中转
+            showStep(0, true);
+            
             fetch("{{url_for('parse_bom_data')}}", {method:'POST', body:formData})
             .then(res => res.json())
             .then(data => {
-                if (data.code !== 1) {alert(data.error); return;}
+                if (data.code !== 1) {
+                    alert(data.error); 
+                    showStep(1); // 返回步骤1
+                    return;
+                }
                 parseRes = data.data;
-                // 显示读取了多少行数据
-                alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据`);
+                
+                // 检查智能匹配开关状态
+                const autoMatchSwitch = document.getElementById('autoMatchSwitch');
+                if (autoMatchSwitch && autoMatchSwitch.checked) {
+                    // 自动应用智能匹配
+                    applyAutoMapping();
+                    alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据，已自动应用智能匹配`);
+                } else {
+                    alert(`✅ 解析成功！共读取 ${parseRes.row_count} 条数据`);
+                }
+                
                 renderMapping();
                 showStep(2, true); // 显示加载中转后跳转到步骤2
                 initAutoClose();
-            }).catch(err => alert('解析失败：'+err.message));
+            }).catch(err => {
+                alert('解析失败：'+err.message);
+                showStep(1); // 返回步骤1
+            });
         }
 
         // 渲染映射表格和预览
         function renderMapping() {
             let tbody = document.getElementById('mappingTbody');
             tbody.innerHTML = '';
-            mapping = {};
             let fields = {{SYSTEM_FIELDS|tojson}};
-
+        
             // 更新数据统计
             document.getElementById('rowCount').innerText = parseRes.row_count;
             document.getElementById('colCount').innerText = parseRes.columns.length;
-
+        
             // 渲染预览表格
             renderPreview();
-
+        
             // 渲染映射表格
-            parseRes.columns.forEach(col => {
-                mapping[col] = '';
+            parseRes.columns.forEach((col, colIdx) => {
+                // 如果映射字典中没有该列，设置为空
+                if (typeof mapping[col] === 'undefined') {
+                    mapping[col] = '';
+                }
+                
                 let tr = document.createElement('tr');
+                
                 // 表格列
                 let td1 = document.createElement('td');
-                td1.innerText = col;
+                td1.innerHTML = `<strong>${col}</strong><br><span class="text-muted small">列${colIdx + 1}</span>`;
                 tr.appendChild(td1);
+                
                 // 下拉框
                 let td2 = document.createElement('td');
                 let select = document.createElement('select');
                 select.className = 'form-select form-select-sm';
+                select.dataset.column = col;
+                
                 fields.forEach(f => {
                     let opt = document.createElement('option');
                     opt.value = f[0];
@@ -2381,20 +2585,191 @@ BOM_TEMPLATE = '''
                         opt.style.color = 'red';
                         opt.style.fontWeight = 'bold';
                     }
+                    if (f[0] === mapping[col]) {
+                        opt.selected = true;
+                    }
                     select.appendChild(opt);
                 });
+                
                 select.onchange = function() {mapping[col] = this.value;};
                 td2.appendChild(select);
                 tr.appendChild(td2);
-                // 预览
+                
+                // 预览数据
                 let td3 = document.createElement('td');
-                let val = parseRes.preview.length > 0 ? parseRes.preview[0][parseRes.columns.indexOf(col)] : '';
-                td3.innerText = val || '无';
+                let previewVal = '无';
+                if (parseRes.preview.length > 0 && colIdx < parseRes.preview[0].length) {
+                    previewVal = parseRes.preview[0][colIdx];
+                    if (previewVal && previewVal.length > 20) {
+                        previewVal = previewVal.substring(0, 20) + '...';
+                    }
+                }
+                td3.innerHTML = `<span class="text-truncate">${previewVal}</span>`;
                 tr.appendChild(td3);
+                
+                // 智能匹配建议（新增列）
+                let td4 = document.createElement('td');
+                let smartSuggest = parseRes.default_mapping[col] || '';
+                let suggestHtml = '';
+                
+                if (smartSuggest) {
+                    let fieldName = '';
+                    for (let f of fields) {
+                        if (f[0] === smartSuggest) {
+                            fieldName = f[1];
+                            break;
+                        }
+                    }
+                    suggestHtml = `
+                        <div class="d-flex align-items-center">
+                            <span class="badge bg-info me-2">建议</span>
+                            <span class="me-2">${fieldName}</span>
+                            <button class="btn btn-sm btn-outline-primary py-0" onclick="applyColumnMapping('${col}', '${smartSuggest}')">
+                                采用
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    suggestHtml = '<span class="text-muted small">无匹配建议</span>';
+                }
+                
+                td4.innerHTML = suggestHtml;
+                tr.appendChild(td4);
+                
                 tbody.appendChild(tr);
             });
+            
+            // 检查必填字段
+            checkRequiredFields();
         }
 
+        // 应用智能匹配
+        function applyAutoMapping() {
+            if (!parseRes.default_mapping || Object.keys(parseRes.default_mapping).length === 0) {
+                alert('没有可用的智能匹配建议，请使用默认顺序映射');
+                resetToDefault();
+                return;
+            }
+            
+            // 应用智能匹配建议
+            parseRes.columns.forEach(col => {
+                if (parseRes.default_mapping[col]) {
+                    mapping[col] = parseRes.default_mapping[col];
+                    
+                    // 更新下拉框
+                    let select = document.querySelector(`select[data-column="${col}"]`);
+                    if (select) {
+                        select.value = parseRes.default_mapping[col];
+                    }
+                }
+            });
+            
+            alert('✅ 已应用智能匹配！请检查必填字段是否正确映射');
+            checkRequiredFields();
+        }
+        
+        // 重置为默认顺序
+        function resetToDefault() {
+            parseRes.columns.forEach((col, idx) => {
+                let defaultField = '';
+                if (idx < DEFAULT_COLUMN_ORDER.length) {
+                    defaultField = DEFAULT_COLUMN_ORDER[idx];
+                }
+                mapping[col] = defaultField;
+                
+                // 更新下拉框
+                let select = document.querySelector(`select[data-column="${col}"]`);
+                if (select) {
+                    select.value = defaultField;
+                }
+            });
+            
+            alert('🔄 已重置为默认顺序映射');
+            checkRequiredFields();
+        }
+        
+        // 清空所有映射
+        function clearAllMapping() {
+            parseRes.columns.forEach(col => {
+                mapping[col] = '';
+                
+                // 更新下拉框
+                let select = document.querySelector(`select[data-column="${col}"]`);
+                if (select) {
+                    select.value = '';
+                }
+            });
+            
+            alert('🗑️ 已清空所有映射，请手动设置');
+            checkRequiredFields();
+        }
+        
+        // 应用单列映射
+        function applyColumnMapping(column, field) {
+            mapping[column] = field;
+            
+            // 更新下拉框
+            let select = document.querySelector(`select[data-column="${column}"]`);
+            if (select) {
+                select.value = field;
+            }
+            
+            // 更新按钮状态
+            let button = event.target;
+            button.innerHTML = '✓ 已采用';
+            button.classList.remove('btn-outline-primary');
+            button.classList.add('btn-success');
+            button.disabled = true;
+        }
+        
+        // 检查必填字段
+        function checkRequiredFields() {
+            const requiredFields = ['category', 'model', 'package'];
+            const mappedFields = Object.values(mapping);
+            
+            let missingFields = [];
+            requiredFields.forEach(field => {
+                if (!mappedFields.includes(field)) {
+                    let fieldName = '';
+                    switch(field) {
+                        case 'category': fieldName = '品类'; break;
+                        case 'model': fieldName = '型号规格'; break;
+                        case 'package': fieldName = '封装'; break;
+                    }
+                    missingFields.push(fieldName);
+                }
+            });
+            
+            if (missingFields.length > 0) {
+                // 显示警告
+                const warningDiv = document.getElementById('missingFieldsWarning');
+                if (!warningDiv) {
+                    let warning = document.createElement('div');
+                    warning.id = 'missingFieldsWarning';
+                    warning.className = 'alert alert-warning mt-3';
+                    warning.innerHTML = `
+                        <strong>⚠️ 缺少必填字段映射：${missingFields.join('、')}</strong>
+                        <p class="mb-0 small">请确保以下字段已正确映射：<br>
+                        • <strong>品类</strong> (第1列)<br>
+                        • <strong>型号规格</strong> (第2列)<br>
+                        • <strong>封装</strong> (第3列)</p>
+                    `;
+                    
+                    // 插入到映射表格前
+                    const table = document.querySelector('.table-responsive');
+                    if (table && table.parentNode) {
+                        table.parentNode.insertBefore(warning, table);
+                    }
+                }
+            } else {
+                // 移除警告
+                const warningDiv = document.getElementById('missingFieldsWarning');
+                if (warningDiv) {
+                    warningDiv.remove();
+                }
+            }
+        }
+        
         // 渲染预览表格
         function renderPreview() {
             const previewHeader = document.getElementById('previewHeader');
@@ -2426,7 +2801,23 @@ BOM_TEMPLATE = '''
         }
 
         // 检测重复数据
+        // 第122行开始，修改 checkDuplicate 函数
         function checkDuplicate() {
+            // 检查必填字段
+            const requiredFields = ['category', 'model', 'package'];
+            const mappedFields = Object.values(mapping);
+            let missingFields = [];
+            requiredFields.forEach(field => {
+                if (!mappedFields.includes(field)) {
+                    missingFields.push(field);
+                }
+            });
+            
+            if (missingFields.length > 0) {
+                alert(`请先映射必填字段：${missingFields.join('、')}`);
+                return;
+            }
+        
             // 获取批量值
             let batchVals = {
                 quantity: document.getElementById('batch_quantity').value.trim() || '0',
@@ -2448,7 +2839,11 @@ BOM_TEMPLATE = '''
             fetch("{{url_for('check_bom_dup')}}", {method:'POST', body:formData})
             .then(res => res.json())
             .then(data => {
-                if (data.code !== 1) {alert(data.error); return;}
+                if (data.code !== 1) {
+                    alert(data.error); 
+                    showStep(2); // 返回步骤2
+                    return;
+                }
                 dupData = data.data.duplicate || [];
                 newData = data.data.unique || [];
                 renderDup();
@@ -2543,18 +2938,14 @@ BOM_TEMPLATE = '''
         }
 
         // 页面加载时初始化
+        // 第197行开始，修改 window.onload 函数
         window.onload = function() {
             initAutoClose();
-            updateSelect();
-            document.querySelectorAll('.compCheck').forEach(c => {
-                c.addEventListener('change', updateSelect);
-            });
-            // ===== 新增：搜索后聚焦输入框，光标定位到内容末尾 =====
-            const searchInput = document.getElementById('searchInput');
-            if (searchInput) {
-                searchInput.focus();
-                const len = searchInput.value.length;
-                searchInput.setSelectionRange(len, len);
+            // 初始化智能匹配开关
+            const autoMatchSwitch = document.getElementById('autoMatchSwitch');
+            if (autoMatchSwitch) {
+                // 默认选中
+                autoMatchSwitch.checked = true;
             }
         };
     </script>
@@ -3126,7 +3517,7 @@ def parse_bom_data():
         if not source_type in ['paste', 'excel']:
             return jsonify({'code': 0, 'error': '无效的导入类型'})
         source = request.form.get('paste_data', '') if source_type == 'paste' else request.files.get('excel_file')
-        columns, preview, raw_data, error, row_count = parse_table_data(source, source_type)
+        columns, preview, raw_data, default_mapping, error, row_count = parse_table_data(source, source_type)
         if error:
             return jsonify({'code': 0, 'error': error})
         return jsonify({
@@ -3135,14 +3526,13 @@ def parse_bom_data():
                 'columns': columns,
                 'preview': preview,
                 'raw_data': raw_data,
+                'default_mapping': default_mapping,  # 新增智能匹配结果
                 'row_count': row_count
             }
         })
     except Exception as e:
         logger.error(f"BOM解析异常：{str(e)}")
         return jsonify({'code': 0, 'error': f"解析异常：{str(e)}"})
-
-
 # BOM重复检测接口
 @app.route('/check_bom_dup', methods=['POST'])
 def check_bom_dup():
