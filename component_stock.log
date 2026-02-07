@@ -80,3 +80,518 @@
 2026-02-06 18:30:41,306 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:30:41] "GET /ai_tools HTTP/1.1" 200 -
 2026-02-06 18:30:42,168 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:30:42] "GET /get_env_config HTTP/1.1" 200 -
 2026-02-06 18:30:42,186 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:30:42] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-06 18:46:05,033 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_9_通用电子元件_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,039 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,039 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_8_不锈钢%20M3×10mm%20有滚花_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,040 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,044 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,047 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,340 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,349 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1" 200 -
+2026-02-06 18:46:05,350 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:05] "GET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1" 200 -
+2026-02-06 18:46:11,961 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:11] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-06 18:46:12,600 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:12] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-06 18:46:12,601 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:12] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-06 18:46:13,907 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 18:46:13] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-06 22:31:39,328 - __main__ - INFO - 数据库表初始化完成
+2026-02-06 22:31:39,330 - __main__ - INFO - component表存在
+2026-02-06 22:31:39,331 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-06 22:31:40,615 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.3.51:5000
+2026-02-06 22:31:40,616 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-06 22:31:42,898 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:31:42] "GET / HTTP/1.1" 200 -
+2026-02-06 22:32:07,726 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-06 22:32:09,704 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:32:09] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-06 22:32:11,022 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:32:11] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-06 22:32:11,325 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:32:11] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-06 22:32:12,332 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:32:12] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-06 22:38:45,306 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:38:45] "[31m[1mPOST /parse_paste_data HTTP/1.1[0m" 405 -
+2026-02-06 22:39:04,532 - werkzeug - INFO - 127.0.0.1 - - [06/Feb/2026 22:39:04] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-02-07 00:12:28,365 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 00:12:28,367 - __main__ - INFO - component表存在
+2026-02-07 00:12:28,368 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 00:12:29,651 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.3.51:5000
+2026-02-07 00:12:29,651 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 00:12:31,979 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:12:31] "GET / HTTP/1.1" 200 -
+2026-02-07 00:12:43,560 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 00:12:45,645 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:12:45] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 00:12:46,745 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:12:46] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 00:12:47,047 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:12:47] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 00:12:48,753 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:12:48] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 00:13:01,051 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:13:01] "[31m[1mPOST /parse_paste_data HTTP/1.1[0m" 405 -
+2026-02-07 00:13:03,525 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:13:03] "[33mGET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1[0m" 404 -
+2026-02-07 00:18:43,990 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 00:18:43,991 - __main__ - INFO - component表存在
+2026-02-07 00:18:43,993 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 00:18:45,263 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.3.51:5000
+2026-02-07 00:18:45,264 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 00:18:47,562 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:18:47] "GET / HTTP/1.1" 200 -
+2026-02-07 00:19:03,020 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 00:19:05,295 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:19:05] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 00:19:06,674 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:19:06] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 00:19:06,974 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:19:06] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 00:19:08,754 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:19:08] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 00:19:48,489 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:19:48] "POST /parse_paste_data HTTP/1.1" 200 -
+2026-02-07 00:26:11,763 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:26:11] "POST /save_to_table HTTP/1.1" 200 -
+2026-02-07 00:26:11,771 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:26:11] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 00:27:39,886 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 00:27:39] "[33mGET /download_table HTTP/1.1[0m" 404 -
+2026-02-07 00:39:45,616 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 00:39:45,617 - __main__ - INFO - component表存在
+2026-02-07 00:39:45,618 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 12:17:35,688 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 12:17:35,690 - __main__ - INFO - component表存在
+2026-02-07 12:17:35,692 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 12:17:37,002 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 12:17:37,003 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 12:17:39,285 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:17:39] "GET / HTTP/1.1" 200 -
+2026-02-07 12:17:40,215 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:17:40] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-02-07 12:17:46,750 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:17:46] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:17:47,537 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:17:47] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:17:47,839 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:17:47] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:17:48,842 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:17:48] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:18:06,682 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:18:06,700 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:18:06] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 12:18:10,815 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:18:10,840 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:18:10] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 12:18:18,239 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:18:18,268 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:18:18] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 12:18:32,619 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:18:32,633 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:18:32] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:18:48,620 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:18:48,644 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:18:48] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 12:19:17,516 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,517 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_8_不锈钢%20M3×10mm%20有滚花_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,518 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,525 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_9_通用电子元件_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,526 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,529 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,821 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,825 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1" 200 -
+2026-02-07 12:19:17,828 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:17] "GET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1" 200 -
+2026-02-07 12:19:26,830 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:19:26,856 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:19:26] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 12:23:37,722 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:23:37] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:23:38,481 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:23:38] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:23:38,483 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:23:38] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:23:39,787 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:23:39] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:23:47,287 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:23:47,312 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:23:47] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:23:51,239 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:23:51,258 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:23:51] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:34:01,777 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 12:34:01,778 - __main__ - INFO - component表存在
+2026-02-07 12:34:01,779 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 12:34:03,045 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 12:34:03,046 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 12:34:05,366 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:34:05] "GET / HTTP/1.1" 200 -
+2026-02-07 12:34:08,036 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:34:08] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:34:08,870 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:34:08] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:34:09,169 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:34:09] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:34:10,179 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:34:10] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:34:11,430 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:34:11,450 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:34:11] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:43:41,882 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 12:43:41,883 - __main__ - INFO - component表存在
+2026-02-07 12:43:41,885 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 12:43:43,157 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 12:43:43,158 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 12:43:45,433 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:45] "GET / HTTP/1.1" 200 -
+2026-02-07 12:43:48,613 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:48] "[36mGET /static/qrcode/QR_9_通用电子元件_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:48,908 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:48] "[36mGET /static/qrcode/QR_8_不锈钢%20M3×10mm%20有滚花_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:48,967 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:48] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:43:49,214 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:49] "[36mGET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:49,275 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:49] "[36mGET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:49,523 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:49] "[36mGET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:50,075 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:50] "[36mGET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:50,076 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:50] "[36mGET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:50,080 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:50] "[36mGET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:50,086 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:50] "[36mGET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 12:43:50,125 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:50] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:43:50,127 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:50] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:43:51,141 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:51] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:43:51,392 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:43:51,409 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:51] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:43:56,917 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:43:56,933 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:43:56] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:45:17,014 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:45:17,041 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:45:17] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:45:26,778 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:45:26,793 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:45:26] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:50:50,032 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 12:50:50,034 - __main__ - INFO - component表存在
+2026-02-07 12:50:50,036 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 12:50:51,311 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 12:50:51,312 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 12:50:53,596 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:50:53] "GET / HTTP/1.1" 200 -
+2026-02-07 12:50:55,935 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:50:55] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:50:56,703 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:50:56] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:50:57,004 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:50:57] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:50:58,021 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:50:58] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:50:58,276 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:50:58,296 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:50:58] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:51:25,638 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:51:25,666 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:25] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:51:28,804 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:28] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:51:29,182 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:29] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:51:29,185 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:29] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:51:30,487 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:30] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:51:31,141 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:51:31,169 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:31] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:51:36,414 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:51:36,428 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:51:36] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:53:20,780 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:53:20,796 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:53:20] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:54:15,933 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:54:15,951 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:54:15] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:58:47,714 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 12:58:47,716 - __main__ - INFO - component表存在
+2026-02-07 12:58:47,717 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 12:58:48,992 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 12:58:48,993 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 12:58:51,301 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:58:51] "GET / HTTP/1.1" 200 -
+2026-02-07 12:58:53,309 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:58:53] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 12:58:54,119 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:58:54] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:58:54,421 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:58:54] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 12:58:55,433 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:58:55] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 12:58:55,686 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:58:55,714 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:58:55] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 12:59:06,979 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 12:59:06,999 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 12:59:06] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:00:24,598 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:00:24,613 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:00:24] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:00:28,217 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:00:28,242 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:00:28] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:04:18,706 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:04:18,731 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:04:18] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:06:59,802 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:06:59,804 - __main__ - INFO - component表存在
+2026-02-07 13:06:59,805 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:07:01,092 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:07:01,092 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:07:03,353 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:07:03] "GET / HTTP/1.1" 200 -
+2026-02-07 13:07:05,758 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:07:05] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:07:19,073 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:07:19] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:08:04,608 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:08:04] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:09:42,666 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:09:42,667 - __main__ - INFO - component表存在
+2026-02-07 13:09:42,669 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:09:43,957 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:09:43,957 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:09:46,175 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:09:46] "GET / HTTP/1.1" 200 -
+2026-02-07 13:09:48,380 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:09:48] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:12:42,157 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:12:42,159 - __main__ - INFO - component表存在
+2026-02-07 13:12:42,161 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:12:43,458 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:12:43,458 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:12:45,693 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:45] "GET / HTTP/1.1" 200 -
+2026-02-07 13:12:49,490 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:49] "[36mGET /static/qrcode/QR_9_通用电子元件_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:49,768 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:49] "[36mGET /static/qrcode/QR_8_不锈钢%20M3×10mm%20有滚花_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:49,845 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:49] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:12:50,075 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:50] "[36mGET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:50,153 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:50] "[36mGET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:50,382 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:50] "[36mGET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:50,823 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:50] "[36mGET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:51,226 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:51] "[36mGET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:51,227 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:51] "[36mGET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:12:51,240 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:12:51] "[36mGET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:14:41,407 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:14:41,409 - __main__ - INFO - component表存在
+2026-02-07 13:14:41,410 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:14:42,676 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:14:42,677 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:14:44,930 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:14:44] "GET / HTTP/1.1" 200 -
+2026-02-07 13:14:46,701 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:14:46] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:14:47,550 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:14:47] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:14:54,187 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:14:54] "POST /save_api_config HTTP/1.1" 200 -
+2026-02-07 13:14:54,195 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:14:54,218 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:14:54] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:15:09,661 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:15:09,686 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:15:09] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:15:09,962 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:15:09] "POST /save_api_config HTTP/1.1" 200 -
+2026-02-07 13:31:10,262 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:31:10,263 - __main__ - INFO - component表存在
+2026-02-07 13:31:10,264 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:31:11,542 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:31:11,543 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:31:13,802 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:31:13] "GET / HTTP/1.1" 200 -
+2026-02-07 13:31:15,968 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:31:15] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:31:48,904 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:31:48,905 - __main__ - INFO - component表存在
+2026-02-07 13:31:48,906 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:31:50,174 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:31:50,175 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:31:52,424 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:31:52] "GET / HTTP/1.1" 200 -
+2026-02-07 13:31:54,469 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:31:54] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:33:00,428 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:33:00] "GET / HTTP/1.1" 200 -
+2026-02-07 13:33:02,447 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:33:02] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:33:05,288 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:33:05] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:33:07,081 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:33:07] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:43:02,924 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:43:02,926 - __main__ - INFO - component表存在
+2026-02-07 13:43:02,928 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:43:04,206 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:43:04,206 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:43:06,478 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:43:06] "GET / HTTP/1.1" 200 -
+2026-02-07 13:43:17,207 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 13:43:19,479 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:43:19] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:43:21,223 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:43:21] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:43:25,152 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:43:25,956 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:43:25] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:44:28,065 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:44:28,839 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:44:28] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:44:57,480 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:44:58,198 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:44:58] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:48:19,341 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:19] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:48:19,763 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:19] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:48:20,743 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:20] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:48:21,132 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:21] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:48:23,998 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:48:24,739 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:24] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:48:27,209 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:48:27,953 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:27] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:48:39,606 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:48:39,607 - __main__ - INFO - component表存在
+2026-02-07 13:48:39,608 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:48:40,894 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:48:40,894 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:48:43,148 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:43] "GET / HTTP/1.1" 200 -
+2026-02-07 13:48:52,303 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 13:48:54,178 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:54] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:48:55,068 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:48:55] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:48:59,821 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:49:00,585 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:49:00] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:49:08,452 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:49:09,205 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:49:09] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:50:06,990 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:06] "GET /bom_import HTTP/1.1" 200 -
+2026-02-07 13:50:20,212 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_8_不锈钢%20M3×10mm%20有滚花_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,219 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_9_通用电子元件_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,491 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,494 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,499 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,503 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,520 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,527 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 13:50:20,799 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:50:20] "[36mGET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 13:51:30,527 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:51:31,393 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:51:31] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:52:36,545 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:52:36,546 - __main__ - INFO - component表存在
+2026-02-07 13:52:36,548 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:52:37,835 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:52:37,835 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:52:40,090 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:52:40] "GET / HTTP/1.1" 200 -
+2026-02-07 13:52:49,155 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 13:52:51,020 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:52:51] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:52:51,779 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:52:51] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:52:56,432 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:52:57,205 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:52:57] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 13:54:29,230 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:54:29] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:55:18,537 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:55:18] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:55:19,620 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:55:19] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 13:56:13,664 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:56:14,338 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:56:14] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 13:56:17,673 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:56:18,358 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:56:18] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 13:56:37,724 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 13:56:38,426 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:56:38] "POST /ai_parse HTTP/1.1" 200 -
+2026-02-07 13:59:36,699 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 13:59:36,700 - __main__ - INFO - component表存在
+2026-02-07 13:59:36,702 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 13:59:37,970 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 13:59:37,970 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 13:59:40,240 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:59:40] "GET / HTTP/1.1" 200 -
+2026-02-07 13:59:52,025 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 13:59:53,937 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:59:53] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 13:59:55,356 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 13:59:55] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 14:08:50,493 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 14:08:50,494 - __main__ - INFO - component表存在
+2026-02-07 14:08:50,495 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 14:08:51,782 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 14:08:51,783 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 14:08:54,031 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:08:54] "GET / HTTP/1.1" 200 -
+2026-02-07 14:09:02,490 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 14:09:04,421 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:09:04] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 14:09:11,505 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:09:11] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 14:10:25,468 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 14:10:25,470 - __main__ - INFO - component表存在
+2026-02-07 14:10:25,471 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 14:10:26,741 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 14:10:26,741 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 14:10:28,986 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:10:28] "GET / HTTP/1.1" 200 -
+2026-02-07 14:11:48,995 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 14:11:50,977 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:11:50] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 14:11:50,981 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:11:50] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 14:11:52,303 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:11:52] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 14:11:52,606 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:11:52] "GET /get_table_info HTTP/1.1" 200 -
+2026-02-07 14:11:53,607 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:11:53] "GET /get_env_config HTTP/1.1" 200 -
+2026-02-07 14:11:54,961 - urllib3.connectionpool - DEBUG - Starting new HTTPS connection (1): www.oneapi.work:443
+2026-02-07 14:11:55,746 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:11:55] "POST /test_api HTTP/1.1" 200 -
+2026-02-07 14:17:17,436 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 14:17:17,437 - __main__ - INFO - component表存在
+2026-02-07 14:17:17,439 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 14:17:18,740 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 14:17:18,740 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 14:17:20,943 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:17:20] "GET / HTTP/1.1" 200 -
+2026-02-07 14:18:22,441 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:22] "GET /edit/9?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:18:23,645 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:23] "[36mGET /static/qrcode/QR_9_通用电子元件_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:27,605 - __main__ - INFO - 文件删除：G:\10_PyTorch\stock_manage\static/qrcode/QR_9_通用电子元件_20260206175136.png
+2026-02-07 14:18:27,615 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:27] "[32mGET /delete/9?selected=&kw= HTTP/1.1[0m" 302 -
+2026-02-07 14:18:27,936 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:27] "GET /?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:18:35,410 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:35] "GET /edit/8?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:18:35,704 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:35] "[36mGET /static/qrcode/QR_8_不锈钢%20M3×10mm%20有滚花_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:38,525 - __main__ - INFO - 文件删除：G:\10_PyTorch\stock_manage\static/qrcode/QR_8_不锈钢 M3×10mm 有滚花_20260206175136.png
+2026-02-07 14:18:38,532 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:38] "[32mGET /delete/8?selected=&kw= HTTP/1.1[0m" 302 -
+2026-02-07 14:18:38,860 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:38] "GET /?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:18:46,708 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:46] "[36mGET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:46,709 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:46] "[36mGET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:46,710 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:46] "[36mGET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:46,714 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:46] "[36mGET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:46,718 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:46] "[36mGET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:46,721 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:46] "[36mGET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:47,015 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:47] "[36mGET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 14:18:47,654 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:18:47] "[36mGET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:07,191 - PIL.PngImagePlugin - DEBUG - STREAM b'IHDR' 16 13
+2026-02-07 14:19:07,192 - PIL.PngImagePlugin - DEBUG - STREAM b'IDAT' 41 2658
+2026-02-07 14:19:07,195 - __main__ - DEBUG - 正在识别图片：QR_2_肖特基二极管 反向电压30V 正向电流0.2A 编带包装_20260206175137.png，格式：None，大小：(810, 810)
+2026-02-07 14:19:07,236 - __main__ - INFO - ✓ 后端识别成功：{"id": 2, "category": "BATS4C", "type": "二极管(肖特基)"...
+2026-02-07 14:19:07,252 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:07] "POST /scan_qrcode_from_image HTTP/1.1" 200 -
+2026-02-07 14:19:08,064 - __main__ - ERROR - 扫码查询失败：name 'extract_qrcode_data' is not defined
+Traceback (most recent call last):
+  File "G:\10_PyTorch\stock_manage\stock_manage.py", line 3874, in scan_qrcode
+    raw_data, error_resp = extract_qrcode_data(request)
+NameError: name 'extract_qrcode_data' is not defined
+2026-02-07 14:19:08,066 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:08] "[35m[1mPOST /scan_qrcode HTTP/1.1[0m" 500 -
+2026-02-07 14:19:32,049 - __main__ - INFO - 数据库中有效文件数：7
+2026-02-07 14:19:32,054 - __main__ - INFO - 残留文件清理完成：图片0个，附件0个，二维码0个，总计0个
+2026-02-07 14:19:32,057 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:32] "[32mGET /clean_residual HTTP/1.1[0m" 302 -
+2026-02-07 14:19:32,183 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:32] "GET /?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:19:35,694 - easyocr.easyocr - WARNING - Using CPU. Note: This module is much faster with a GPU.
+2026-02-07 14:19:37,657 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_6_4.7KΩ%20±1%_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:37,659 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_7_开关二极管%20100V%20215mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:37,660 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:37,663 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_4_肖特基二极管%2030V%200.2A_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:37,670 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:37,672 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_2_肖特基二极管%20反向电压30V%20正向电流0.2A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:37,724 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "GET /ai_tools HTTP/1.1" 200 -
+2026-02-07 14:19:37,967 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:37] "[36mGET /static/qrcode/QR_1_肖特基二极管%20反向电压40V%20正向电流1A%20编带包装_20260206175137.png HTTP/1.1[0m" 304 -
+2026-02-07 14:19:57,170 - PIL.PngImagePlugin - DEBUG - STREAM b'IHDR' 16 13
+2026-02-07 14:19:57,171 - PIL.PngImagePlugin - DEBUG - STREAM b'IDAT' 41 2683
+2026-02-07 14:19:57,173 - __main__ - DEBUG - 正在识别图片：QR_3_开关二极管 反向电压100V 正向电流150mA 编带包装_20260206175136.png，格式：None，大小：(810, 810)
+2026-02-07 14:19:57,196 - __main__ - INFO - ✓ 后端识别成功：{"id": 3, "category": "1N4148WS", "type": "二极管(开关)...
+2026-02-07 14:19:57,200 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:57] "POST /scan_qrcode_from_image HTTP/1.1" 200 -
+2026-02-07 14:19:58,005 - __main__ - ERROR - 扫码查询失败：name 'extract_qrcode_data' is not defined
+Traceback (most recent call last):
+  File "G:\10_PyTorch\stock_manage\stock_manage.py", line 3874, in scan_qrcode
+    raw_data, error_resp = extract_qrcode_data(request)
+NameError: name 'extract_qrcode_data' is not defined
+2026-02-07 14:19:58,006 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:19:58] "[35m[1mPOST /scan_qrcode HTTP/1.1[0m" 500 -
+2026-02-07 14:23:21,606 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 14:23:21,607 - __main__ - INFO - component表存在
+2026-02-07 14:23:21,609 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 14:23:22,891 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 14:23:22,891 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 14:23:25,125 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:23:25] "GET / HTTP/1.1" 200 -
+2026-02-07 14:23:32,915 - PIL.PngImagePlugin - DEBUG - STREAM b'IHDR' 16 13
+2026-02-07 14:23:32,915 - PIL.PngImagePlugin - DEBUG - STREAM b'IDAT' 41 2683
+2026-02-07 14:23:32,918 - __main__ - DEBUG - 正在识别图片：QR_3_开关二极管 反向电压100V 正向电流150mA 编带包装_20260206175136.png，格式：None，大小：(810, 810)
+2026-02-07 14:23:32,942 - __main__ - INFO - ✓ 后端识别成功：{"id": 3, "category": "1N4148WS", "type": "二极管(开关)...
+2026-02-07 14:23:32,953 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:23:32] "POST /scan_qrcode_from_image HTTP/1.1" 200 -
+2026-02-07 14:23:33,760 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:23:33] "[33mPOST /scan_qrcode HTTP/1.1[0m" 404 -
+2026-02-07 14:38:10,417 - __main__ - INFO - 数据库表初始化完成
+2026-02-07 14:38:10,418 - __main__ - INFO - component表存在
+2026-02-07 14:38:10,419 - __main__ - INFO - component表列: ['id', 'category', 'type', 'model', 'package', 'supplier', 'quantity', 'unit', 'location', 'price', 'buy_time', 'channel', 'remark', 'img_path', 'attach_path', 'qrcode_path']
+2026-02-07 14:38:11,690 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://198.18.0.1:5000
+2026-02-07 14:38:11,691 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-02-07 14:38:13,968 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:13] "GET / HTTP/1.1" 200 -
+2026-02-07 14:38:22,647 - PIL.PngImagePlugin - DEBUG - STREAM b'IHDR' 16 13
+2026-02-07 14:38:22,647 - PIL.PngImagePlugin - DEBUG - STREAM b'IDAT' 41 2683
+2026-02-07 14:38:22,649 - __main__ - DEBUG - 正在识别图片：QR_3_开关二极管 反向电压100V 正向电流150mA 编带包装_20260206175136.png，格式：None，大小：(810, 810)
+2026-02-07 14:38:22,673 - __main__ - INFO - ✓ 后端识别成功：{"id": 3, "category": "1N4148WS", "type": "二极管(开关)...
+2026-02-07 14:38:22,685 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:22] "POST /scan_qrcode_from_image HTTP/1.1" 200 -
+2026-02-07 14:38:23,505 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:23] "POST /scan_qrcode HTTP/1.1" 200 -
+2026-02-07 14:38:26,875 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:26] "GET /edit/3 HTTP/1.1" 200 -
+2026-02-07 14:38:28,172 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:28] "[36mGET /static/qrcode/QR_3_开关二极管%20反向电压100V%20正向电流150mA%20编带包装_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:38:32,962 - __main__ - INFO - 文件删除：G:\10_PyTorch\stock_manage\static/qrcode/QR_3_开关二极管 反向电压100V 正向电流150mA 编带包装_20260206175136.png
+2026-02-07 14:38:32,974 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:32] "[32mGET /delete/3?selected=&kw= HTTP/1.1[0m" 302 -
+2026-02-07 14:38:33,299 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:38:33] "GET /?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:39:05,225 - PIL.PngImagePlugin - DEBUG - STREAM b'IHDR' 16 13
+2026-02-07 14:39:05,225 - PIL.PngImagePlugin - DEBUG - STREAM b'IDAT' 41 1858
+2026-02-07 14:39:05,227 - __main__ - DEBUG - 正在识别图片：QR_5_开关二极管 100V 150mA_20260206175136.png，格式：None，大小：(690, 690)
+2026-02-07 14:39:05,243 - __main__ - INFO - ✓ 后端识别成功：{"id": 5, "category": "1N4148", "type": "二极管", "mo...
+2026-02-07 14:39:05,246 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:39:05] "POST /scan_qrcode_from_image HTTP/1.1" 200 -
+2026-02-07 14:39:06,055 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:39:06] "POST /scan_qrcode HTTP/1.1" 200 -
+2026-02-07 14:39:07,431 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:39:07] "GET /edit/5 HTTP/1.1" 200 -
+2026-02-07 14:39:07,485 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:39:07] "[36mGET /static/qrcode/QR_5_开关二极管%20100V%20150mA_20260206175136.png HTTP/1.1[0m" 304 -
+2026-02-07 14:40:22,845 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:40:22] "[32mPOST /edit/5 HTTP/1.1[0m" 302 -
+2026-02-07 14:40:23,164 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:40:23] "GET /?selected=&kw= HTTP/1.1" 200 -
+2026-02-07 14:40:32,756 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:40:32] "GET /?selected=&kw=111 HTTP/1.1" 200 -
+2026-02-07 14:40:35,013 - werkzeug - INFO - 127.0.0.1 - - [07/Feb/2026 14:40:35] "GET /?selected=&kw= HTTP/1.1" 200 -

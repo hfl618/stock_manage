@@ -2050,6 +2050,17 @@ def download_table_proxy():
     except Exception as e:
         return jsonify({'success': False, 'message': f'代理 download_table 失败: {e}'}), 500
 
+
+# -------------------------- 新增：修复粘贴模式解析的代理路由 --------------------------
+@app.route('/parse_paste_data', methods=['POST'])
+def parse_paste_data_proxy():
+    try:
+        import AI_app as ai
+        # 直接调用 AI_app 中的解析函数
+        return ai.parse_paste_data()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'代理 parse_paste_data 失败: {e}'}), 500
+
 # -----------------------------------------------------------------------------
 EDIT_TEMPLATE = '''
 <!DOCTYPE html>
@@ -2139,6 +2150,7 @@ EDIT_TEMPLATE = '''
             <div class="mt-4">
                 <a href="{{url_for('index', selected=selected|join(','), kw=kw or '')}}" class="btn btn-secondary">返回</a>
                 <button type="submit" class="btn btn-primary ms-2">保存修改</button>
+                <a href="{{url_for('delete', id=comp.id, selected=selected|join(','), kw=kw or '')}}" class="btn btn-danger ms-2" onclick="return confirm('确定删除该元器件吗？删除后无法恢复！')">删除</a>
             </div>
         </form>
     </div>
@@ -3857,62 +3869,19 @@ def do_bom_import():
 # 扫码读取接口（修复导入错误，直接调用本地工具函数）
 @app.route('/scan_qrcode', methods=['POST'])
 def scan_qrcode():
-    try:
-        # 提取二维码数据（调用本地工具函数，无需导入qrcode_tools）
-        raw_data, error_resp = extract_qrcode_data(request)
-        if error_resp:
-            return error_resp
-        
-        # 解析二维码数据
-        comp_id, comp_obj = parse_qrcode_data(raw_data)
-        
-        # 根据ID查询元器件
-        if comp_id:
-            comp = Component.query.get(int(comp_id))
-            if comp:
-                return jsonify({
-                    'code': 1,
-                    'data': {
-                        'id': comp.id,
-                        'category': comp.category,
-                        'type': comp.type,
-                        'model': comp.model,
-                        'package': comp.package,
-                        'supplier': comp.supplier,
-                        'quantity': comp.quantity,
-                        'unit': comp.unit,
-                        'location': comp.location,
-                        'price': comp.price,
-                        'buy_time': comp.buy_time,
-                        'channel': comp.channel,
-                        'remark': comp.remark,
-                        'img_path': comp.img_path,
-                        'qrcode_path': comp.qrcode_path
-                    }
-                })
-        
-        # 无ID但有JSON对象，直接返回
-        if comp_obj:
-            return jsonify({'code': 1, 'data': comp_obj})
-        
-        # 未找到元器件
-        return jsonify({'code': 0, 'error': '未找到对应的元器件'}), 404
-        
-    except Exception as e:
-        logger.error(f"扫码查询失败：{str(e)}", exc_info=True)
-        return jsonify({'code': 0, 'error': f'扫码失败：{str(e)}'}), 500
+    """解析扫码数据并返回元器件详情"""
     try:
         import qrcode_tools as qt
         
-        # 提取并验证二维码数据
+        # 1. 提取二维码数据
         raw_data, error_resp = qt.extract_qrcode_data(request)
         if error_resp:
             return error_resp
         
-        # 解析二维码数据（纯数据处理，无数据库操作）
+        # 2. 解析二维码数据
         comp_id, comp_obj = qt.parse_qrcode_data(raw_data)
         
-        # 若解析到 id，从数据库查询元器件
+        # 3. 根据ID查询元器件
         if comp_id:
             comp = Component.query.get(int(comp_id))
             if comp:
@@ -3932,21 +3901,20 @@ def scan_qrcode():
                         'buy_time': getattr(comp, 'buy_time', ''),
                         'channel': getattr(comp, 'channel', ''),
                         'remark': getattr(comp, 'remark', ''),
-                        'img_path': getattr(comp, 'img_path', ''),
-                        'qrcode_path': getattr(comp, 'qrcode_path', '')
+                        'img_path': comp.img_path,
+                        'qrcode_path': comp.qrcode_path
                     }
                 })
         
-        # 若无 id 但有 JSON 对象，返回该对象
+        # 4. 若无ID但有对象数据，直接返回
         if comp_obj:
             return jsonify({'code': 1, 'data': comp_obj})
         
-        # 都没有则返回错误
-        return jsonify({'code': 0, 'error': '未找到对应的元器件或二维码数据格式不支持'}), 404
+        return jsonify({'code': 0, 'error': '未找到对应的元器件'}), 404
         
     except Exception as e:
-        logger.error(f"扫码读取失败：{str(e)}", exc_info=True)
-        return jsonify({'code': 0, 'error': f'扫码读取失败：{str(e)}'}), 500
+        logger.error(f"扫码查询失败：{str(e)}", exc_info=True)
+        return jsonify({'code': 0, 'error': f'扫码处理异常：{str(e)}'}), 500
 
 
 # 独立扫码管理页面（便于单独打开调试）
@@ -4025,7 +3993,8 @@ def scan_qrcode_from_image():
                             'remark': getattr(comp, 'remark', ''),
                             'img_path': getattr(comp, 'img_path', ''),
                             'qrcode_path': getattr(comp, 'qrcode_path', '')
-                        }
+                        },
+                        'qrcode_data': qrcode_data
                     })
             
             if comp_obj:
